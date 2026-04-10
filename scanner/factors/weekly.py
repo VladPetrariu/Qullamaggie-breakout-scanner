@@ -76,7 +76,9 @@ _CONFLUENCE_LABELS = {
 
 def _resample_weekly(df: pd.DataFrame) -> pd.DataFrame:
     """Resample daily OHLCV to weekly bars."""
-    wk = df.resample("W").agg({
+    # Use last 60 weeks (~300 days) max to avoid resampling unnecessary history
+    tail = df.tail(300)
+    wk = tail.resample("W").agg({
         "Open": "first",
         "High": "max",
         "Low": "min",

@@ -8,6 +8,8 @@ C3. vs benchmark   — outperformance vs SPY (sector ETF added later)
 import pandas as pd
 import numpy as np
 
+from ..config import SECTOR_ETFS
+
 
 def compute_universe_rs(
     price_data: dict[str, pd.DataFrame],
@@ -103,6 +105,24 @@ def _spy_return(price_data):
     if spy is None or len(spy) < 21:
         return None
     return spy["Close"].pct_change(20).iloc[-1]
+
+
+def compute_sector_etf_returns(
+    price_data: dict[str, pd.DataFrame],
+) -> dict[str, float]:
+    """Compute 20-day return for each sector ETF.
+
+    Returns {sector_name: 20d_return}.
+    """
+    results: dict[str, float] = {}
+    for sector, etf in SECTOR_ETFS.items():
+        df = price_data.get(etf)
+        if df is None or len(df) < 21:
+            continue
+        ret = df["Close"].pct_change(20).iloc[-1]
+        if pd.notna(ret):
+            results[sector] = float(ret)
+    return results
 
 
 def _direction_label(direction: float) -> str:

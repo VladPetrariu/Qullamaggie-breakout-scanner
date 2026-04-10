@@ -78,15 +78,16 @@ MULTI_YEAR_LOOKBACK_DAYS = 5 * 252  # ~5 years of trading days
 # SPDR Sector ETF mapping
 # ---------------------------------------------------------------------------
 SECTOR_ETFS = {
+    # Keys match yfinance Ticker.info['sector'] values
     "Technology": "XLK",
     "Healthcare": "XLV",
-    "Financials": "XLF",
-    "Consumer Discretionary": "XLY",
-    "Consumer Staples": "XLP",
+    "Financial Services": "XLF",
+    "Consumer Cyclical": "XLY",
+    "Consumer Defensive": "XLP",
     "Energy": "XLE",
     "Utilities": "XLU",
     "Industrials": "XLI",
-    "Materials": "XLB",
+    "Basic Materials": "XLB",
     "Real Estate": "XLRE",
     "Communication Services": "XLC",
 }

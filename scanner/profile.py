@@ -6,6 +6,8 @@ Float/SI/sector are fetched from yfinance Ticker.info (slow, cached 30 days).
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import numpy as np
 import pandas as pd
 import yfinance as yf
@@ -64,23 +66,33 @@ def fetch_stock_profiles(
     if not to_fetch:
         return profiles
 
-    for ticker in tqdm(to_fetch, desc="  Fetching profiles", unit="stock"):
-        try:
-            info = yf.Ticker(ticker).info or {}
-            float_shares = info.get("floatShares")
-            profiles[ticker] = {
-                "float_shares": float_shares,
-                "float_label": _float_label(float_shares),
-                "short_pct_float": info.get("shortPercentOfFloat"),
-                "short_ratio": info.get("shortRatio"),
-                "sector": info.get("sector"),
-                "industry": info.get("industry"),
-            }
-        except Exception:
-            profiles[ticker] = {}
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {pool.submit(_fetch_one, t): t for t in to_fetch}
+        with tqdm(total=len(to_fetch), desc="  Fetching profiles", unit="stock") as pbar:
+            for fut in as_completed(futures):
+                ticker = futures[fut]
+                profiles[ticker] = fut.result()
+                pbar.update(1)
 
     cache.set_json("profiles", profiles)
     return profiles
+
+
+def _fetch_one(ticker: str) -> dict:
+    """Fetch profile data for a single ticker."""
+    try:
+        info = yf.Ticker(ticker).info or {}
+        float_shares = info.get("floatShares")
+        return {
+            "float_shares": float_shares,
+            "float_label": _float_label(float_shares),
+            "short_pct_float": info.get("shortPercentOfFloat"),
+            "short_ratio": info.get("shortRatio"),
+            "sector": info.get("sector"),
+            "industry": info.get("industry"),
+        }
+    except Exception:
+        return {}
 
 
 def _float_label(shares: int | None) -> str:

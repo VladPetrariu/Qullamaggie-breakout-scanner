@@ -15,6 +15,53 @@ from .config import PROJECT_ROOT, SCANS_DIR
 _TEMPLATE_DIR = PROJECT_ROOT / "templates"
 
 
+def load_prior_scan() -> dict | None:
+    """Load the most recent prior scan JSON (before today).
+
+    Returns the parsed JSON dict, or None if no prior scan exists.
+    """
+    today = datetime.now().strftime("%Y-%m-%d")
+    scan_files = sorted(SCANS_DIR.glob("scan_*.json"), reverse=True)
+    for path in scan_files:
+        date_part = path.stem.replace("scan_", "")
+        if date_part < today:
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+    return None
+
+
+def compute_deltas(watchlist: list[dict], prior: dict | None) -> list[dict]:
+    """Annotate each stock with rank change and 'new' flag vs prior scan.
+
+    Modifies watchlist in-place and returns it.
+    """
+    if prior is None:
+        return watchlist
+
+    prior_list = prior.get("watchlist", [])
+    prior_rank = {s["ticker"]: i for i, s in enumerate(prior_list)}
+    prior_data = {s["ticker"]: s for s in prior_list}
+
+    for i, stock in enumerate(watchlist):
+        ticker = stock["ticker"]
+        if ticker in prior_rank:
+            stock["is_new"] = False
+            stock["rank_change"] = prior_rank[ticker] - i  # positive = moved up
+            # Key factor deltas
+            prev = prior_data[ticker]
+            stock["delta_rs"] = round(
+                stock.get("rs_percentile", 0) - prev.get("rs_percentile", 0), 1
+            )
+        else:
+            stock["is_new"] = True
+            stock["rank_change"] = 0
+            stock["delta_rs"] = 0
+
+    return watchlist
+
+
 def generate_dashboard(
     market_context: dict,
     watchlist: list[dict],

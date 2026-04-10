@@ -7,13 +7,13 @@ from tqdm import tqdm
 
 from .cache import Cache
 from .config import CACHE_DIR, SCANS_DIR
-from .dashboard import generate_dashboard, open_dashboard, save_scan_json
+from .dashboard import compute_deltas, generate_dashboard, load_prior_scan, open_dashboard, save_scan_json
 from .data import download_prices
 from .factors.breakout_level import compute_breakout_level
 from .factors.catalyst import compute_catalyst
 from .factors.consolidation import compute_consolidation
 from .factors.market_context import compute_market_context
-from .factors.relative_strength import compute_universe_rs
+from .factors.relative_strength import compute_sector_etf_returns, compute_universe_rs
 from .factors.volume import compute_volume
 from .factors.weekly import compute_weekly
 from .profile import compute_abr, fetch_stock_profiles
@@ -78,6 +78,7 @@ def main():
     print()
     print("[5/8] Computing relative strength...")
     rs_data = compute_universe_rs(price_data, universe)
+    sector_etf_returns = compute_sector_etf_returns(price_data)
     print(f"  RS computed for {len(rs_data):,} stocks")
 
     # ── 6. Factor analysis ──────────────────────────────────────
@@ -129,7 +130,8 @@ def main():
     top_tickers = [s["ticker"] for s in watchlist[:50]]
     profiles = fetch_stock_profiles(top_tickers, cache)
 
-    # Merge profile data into watchlist
+    # Merge profile data + sector RS into watchlist
+    spy_ret = sector_etf_returns.get("_spy")  # not present, computed below
     for stock in watchlist:
         profile = profiles.get(stock["ticker"], {})
         stock["float_shares"] = profile.get("float_shares")
@@ -139,9 +141,41 @@ def main():
         stock["sector"] = profile.get("sector", "")
         stock["industry"] = profile.get("industry", "")
 
+        # Sector RS: compare vs sector ETF instead of SPY
+        sector = stock["sector"]
+        vs_spy = stock.get("vs_spy")
+        etf_ret = sector_etf_returns.get(sector)
+        if sector and vs_spy is not None and etf_ret is not None:
+            # vs_spy = (stock_ret - spy_ret) * 100
+            # vs_sector = (stock_ret - etf_ret) * 100
+            #           = vs_spy + (spy_ret - etf_ret) * 100
+            # We don't have spy_ret here, but we can get stock_ret from price data
+            df = price_data.get(stock["ticker"])
+            if df is not None and len(df) >= 21:
+                stock_ret = float(df["Close"].pct_change(20).iloc[-1])
+                vs_sector = round((stock_ret - etf_ret) * 100, 1)
+                stock["vs_sector"] = vs_sector
+                stock["vs_sector_label"] = (
+                    "leading" if vs_sector >= 10 else
+                    "neutral" if vs_sector >= -5 else
+                    "laggard"
+                )
+            else:
+                stock["vs_sector"] = None
+                stock["vs_sector_label"] = "unknown"
+        else:
+            stock["vs_sector"] = None
+            stock["vs_sector_label"] = "unknown"
+
     # ── 8. Dashboard ───────────────────────────────────────────────
     print()
     print("[8/8] Generating dashboard...")
+    prior = load_prior_scan()
+    watchlist = compute_deltas(watchlist, prior)
+    if prior:
+        prior_count = len(prior.get("watchlist", []))
+        new_count = sum(1 for s in watchlist if s.get("is_new"))
+        print(f"  Compared with prior scan: {new_count} new entries (was {prior_count} stocks)")
     json_path = save_scan_json(ctx, watchlist)
     html_path = generate_dashboard(ctx, watchlist, len(universe))
     print(f"  JSON: {json_path}")
