@@ -262,5 +262,8 @@ if __name__ == "__main__":
     if "--watch" in sys.argv:
         from .watcher import watch
         watch()
+    elif "--backtest" in sys.argv:
+        from .backtest import run_backtest
+        run_backtest()
     else:
         main()

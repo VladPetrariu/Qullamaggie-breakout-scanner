@@ -9,3 +9,11 @@ build/
 # Scanner output (regenerated each run)
 cache/
 scans/
+
+# Backtest working files (results.json is large; test_results/ has the summaries)
+backtest/checkpoint.json
+backtest/results.json
+
+# Local planning docs (not for GitHub)
+PLAN.md
+CLAUDE.md

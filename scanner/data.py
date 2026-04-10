@@ -32,6 +32,8 @@ def download_prices(
     """
     today = pd.Timestamp.now().strftime("%Y-%m-%d")
     cache_key = f"prices_{today}"
+    if period != PRICE_HISTORY_PERIOD:
+        cache_key = f"prices_{period}_{today}"
 
     cached_df = cache.get_df(cache_key, max_age_hours=CACHE_PRICES_TTL_HOURS)
     if cached_df is not None:
