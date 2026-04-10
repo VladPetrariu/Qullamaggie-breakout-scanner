@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Qullamaggie Scanner — {{ generated_date }}</title>
+<style>
+:root {
+  --bg: #0d0d0d;
+  --card: #1a1a1a;
+  --card-border: #2a2a2a;
+  --text: #e0e0e0;
+  --text-dim: #888;
+  --green: #22c55e;
+  --yellow: #eab308;
+  --orange: #f97316;
+  --red: #ef4444;
+  --blue: #3b82f6;
+  --purple: #a855f7;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg); color: var(--text);
+  line-height: 1.5; padding: 16px; max-width: 1400px; margin: 0 auto;
+}
+
+/* ── Header ────────────────────────────────────── */
+.header { margin-bottom: 16px; }
+.header h1 { font-size: 20px; font-weight: 600; }
+.header .meta { font-size: 13px; color: var(--text-dim); }
+
+/* ── Market Context Banner ─────────────────────── */
+.banner {
+  padding: 16px 20px; border-radius: 10px; margin-bottom: 16px;
+  border: 1px solid var(--card-border);
+}
+.banner.favorable { background: #052e16; border-color: #166534; }
+.banner.mixed { background: #1a1a00; border-color: #854d0e; }
+.banner.caution { background: #1c1000; border-color: #9a3412; }
+.banner.risk_off { background: #1c0000; border-color: #991b1b; }
+.banner .regime {
+  font-size: 18px; font-weight: 700; margin-bottom: 8px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.banner.favorable .regime { color: var(--green); }
+.banner.mixed .regime { color: var(--yellow); }
+.banner.caution .regime { color: var(--orange); }
+.banner.risk_off .regime { color: var(--red); }
+.banner .indicators {
+  display: flex; flex-wrap: wrap; gap: 20px; font-size: 13px; color: var(--text-dim);
+}
+.banner .indicators span { white-space: nowrap; }
+.banner .indicators .val { color: var(--text); font-weight: 500; }
+
+/* ── Controls ──────────────────────────────────── */
+.controls {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+  margin-bottom: 16px; font-size: 13px;
+}
+.controls input, .controls select {
+  background: var(--card); color: var(--text); border: 1px solid var(--card-border);
+  padding: 6px 10px; border-radius: 6px; font-size: 13px; outline: none;
+}
+.controls input:focus, .controls select:focus { border-color: var(--blue); }
+.controls input { width: 180px; }
+.controls .count { color: var(--text-dim); margin-left: auto; }
+
+/* ── Card Grid ─────────────────────────────────── */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 10px;
+}
+.card {
+  background: var(--card); border: 1px solid var(--card-border);
+  border-radius: 8px; padding: 14px 16px; font-size: 13px;
+}
+.card:hover { border-color: #444; }
+.card-top {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-bottom: 2px;
+}
+.card-top .ticker { font-size: 16px; font-weight: 700; color: #fff; }
+.card-top .sector { font-size: 11px; color: var(--text-dim); }
+.card-name {
+  font-size: 12px; color: var(--text-dim); margin-bottom: 10px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.card-row {
+  display: flex; justify-content: space-between; padding: 2px 0;
+}
+.card-row .label { color: var(--text-dim); }
+.card-row .value { font-weight: 500; text-align: right; }
+.card-divider { border-top: 1px solid var(--card-border); margin: 8px 0; }
+
+/* value colors */
+.v-green { color: var(--green); }
+.v-red { color: var(--red); }
+.v-yellow { color: var(--yellow); }
+.v-blue { color: var(--blue); }
+.v-purple { color: var(--purple); }
+.v-dim { color: var(--text-dim); }
+
+/* ── Responsive ────────────────────────────────── */
+@media (max-width: 600px) {
+  body { padding: 10px; }
+  .cards { grid-template-columns: 1fr; }
+  .banner .indicators { flex-direction: column; gap: 6px; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Qullamaggie Breakout Scanner</h1>
+  <div class="meta">{{ generated_date }} {{ generated_time }} &middot; {{ universe_size }} stocks scanned &middot; {{ watchlist_count }} with factor data</div>
+</div>
+
+<!-- Market Context Banner -->
+<div class="banner {{ market_context.regime }}">
+  <div class="regime">
+    {% if market_context.regime == 'favorable' %}Favorable — full confidence
+    {% elif market_context.regime == 'mixed' %}Mixed — flag weak sectors
+    {% elif market_context.regime == 'caution' %}Caution — highest conviction only
+    {% else %}Risk Off — cash is the position{% endif %}
+  </div>
+  <div class="indicators">
+    <span>Above 50 MA: <span class="val">{{ market_context.pct_above_50ma }}%</span></span>
+    <span>Above 20 MA: <span class="val">{{ market_context.pct_above_20ma }}%</span></span>
+    <span>52wk H/L: <span class="val">{{ market_context.new_highs }} / {{ market_context.new_lows }}</span> ({{ market_context.highs_lows_ratio }})</span>
+    {% if market_context.vix_level %}
+    <span>VIX: <span class="val">{{ market_context.vix_level }}</span>
+      {% if market_context.vix_direction == 'falling' %}<span class="v-green">&#9660;</span>
+      {% elif market_context.vix_direction == 'rising' %}<span class="v-red">&#9650;</span>
+      {% else %}<span class="v-dim">&#9654;</span>{% endif %}
+    </span>
+    {% endif %}
+    <span>Breakout follow-through: <span class="val">{{ market_context.breakout_followthrough }}%</span></span>
+  </div>
+</div>
+
+<!-- Controls -->
+<div class="controls">
+  <input type="text" id="search" placeholder="Search ticker...">
+  <select id="sort-by">
+    <option value="rank">Rank (default)</option>
+    <option value="freshness_score">Catalyst freshness</option>
+    <option value="rs_percentile">RS percentile</option>
+    <option value="rs_direction">RS direction</option>
+    <option value="atr_compression">ATR compression</option>
+    <option value="vol_ratio_50d">Volume pace</option>
+    <option value="consol_days">Consolidation days</option>
+    <option value="hh_hl_pct">HH/HL %</option>
+    <option value="abr">ABR</option>
+  </select>
+  <select id="filter-ema">
+    <option value="all">All EMA stacks</option>
+    <option value="full" selected>Full stack only</option>
+    <option value="full,partial">Full + Partial</option>
+  </select>
+  <select id="filter-sector">
+    <option value="all">All sectors</option>
+  </select>
+  <span class="count" id="visible-count"></span>
+</div>
+
+<!-- Card Grid -->
+<div class="cards" id="cards"></div>
+
+<script>
+const DATA = {{ watchlist_json }};
+
+// ── Helpers ──────────────────────────────────────
+function rsColor(pct) {
+  if (pct >= 90) return 'v-green';
+  if (pct >= 70) return 'v-blue';
+  if (pct >= 50) return '';
+  return 'v-red';
+}
+function dirArrow(d) {
+  if (d >= 3) return '<span class="v-green">\u25B2+' + Math.abs(d).toFixed(1) + '</span>';
+  if (d <= -3) return '<span class="v-red">\u25BC' + Math.abs(d).toFixed(1) + '</span>';
+  return '<span class="v-dim">\u25B6' + Math.abs(d).toFixed(1) + '</span>';
+}
+function comprColor(c) {
+  if (c <= 0.5) return 'v-green';
+  if (c <= 0.7) return 'v-blue';
+  if (c <= 1.0) return '';
+  return 'v-red';
+}
+function stackColor(s) {
+  if (s === 'full') return 'v-green';
+  if (s === 'partial') return 'v-blue';
+  return 'v-dim';
+}
+function candleColor(l) {
+  if (l === 'ideal') return 'v-green';
+  if (l === 'ok') return 'v-blue';
+  if (l === 'barcode') return 'v-red';
+  return 'v-dim';
+}
+function fmtFloat(shares) {
+  if (!shares) return '\u2014';
+  let m = shares / 1e6;
+  if (m >= 1000) return (m / 1000).toFixed(1) + 'B';
+  return m.toFixed(1) + 'M';
+}
+function fmtPct(v) {
+  if (v == null) return '\u2014';
+  return (v * 100).toFixed(1) + '%';
+}
+function fmtVal(v) {
+  if (v == null) return '\u2014';
+  return v;
+}
+function freshnessColor(label) {
+  if (label === 'early') return 'v-green';
+  if (label === 'active') return 'v-blue';
+  if (label === 'late') return 'v-yellow';
+  if (label === 'dead') return 'v-red';
+  return 'v-dim';
+}
+function volColor(label) {
+  if (label === 'extreme' || label === 'strong') return 'v-green';
+  if (label === 'above_avg') return 'v-blue';
+  if (label === 'quiet') return 'v-dim';
+  return '';
+}
+function levelColor(type) {
+  if (type === 'ath') return 'v-green';
+  if (type === 'multi_year') return 'v-blue';
+  if (type === '52wk') return 'v-yellow';
+  return 'v-dim';
+}
+function confluenceColor(c) {
+  if (c === 'max_confluence' || c === 'max_confirmation') return 'v-green';
+  if (c === 'strong') return 'v-blue';
+  if (c === 'context') return 'v-dim';
+  return 'v-dim';
+}
+
+// ── Render ───────────────────────────────────────
+function renderCards(data) {
+  const container = document.getElementById('cards');
+  container.innerHTML = data.map((s, idx) => `
+    <div class="card">
+      <div class="card-top">
+        <span class="ticker">${s.ticker}</span>
+        <span class="sector">${s.sector || ''}</span>
+      </div>
+      <div class="card-name">${s.name || ''}</div>
+      ${s.has_catalyst ? `
+      <div class="card-row">
+        <span class="label">Catalyst</span>
+        <span class="value ${freshnessColor(s.freshness_label)}">${s.freshness_label} (${s.freshness_score.toFixed(2)})</span>
+      </div>
+      <div class="card-row">
+        <span class="label">Vol spike</span>
+        <span class="value">${s.catalyst_vol_ratio}x <span class="v-dim">${s.catalyst_age}d ago</span></span>
+      </div>
+      <div class="card-divider"></div>` : ''}
+      <div class="card-row">
+        <span class="label">Volume pace</span>
+        <span class="value ${volColor(s.vol_label)}">${s.vol_ratio_50d != null ? s.vol_ratio_50d.toFixed(1) + 'x' : '\u2014'} <span class="v-dim">${s.vol_label || ''}</span></span>
+      </div>
+      <div class="card-row">
+        <span class="label">Flag volume</span>
+        <span class="value">${s.flag_vol_ratio != null ? s.flag_vol_ratio.toFixed(2) + 'x' : '\u2014'} <span class="v-dim">${s.flag_vol_label || ''}</span></span>
+      </div>
+      <div class="card-divider"></div>
+      <div class="card-row">
+        <span class="label">RS percentile</span>
+        <span class="value ${rsColor(s.rs_percentile)}">${s.rs_percentile.toFixed(1)}%</span>
+      </div>
+      <div class="card-row">
+        <span class="label">RS direction (5d)</span>
+        <span class="value">${dirArrow(s.rs_direction)}</span>
+      </div>
+      <div class="card-row">
+        <span class="label">vs SPY (20d)</span>
+        <span class="value ${s.vs_spy > 5 ? 'v-green' : s.vs_spy < -5 ? 'v-red' : ''}">${s.vs_spy != null ? (s.vs_spy > 0 ? '+' : '') + s.vs_spy.toFixed(1) + '%' : '\u2014'}</span>
+      </div>
+      <div class="card-divider"></div>
+      <div class="card-row">
+        <span class="label">EMA stack</span>
+        <span class="value ${stackColor(s.ema_stack)}">${s.ema_stack}</span>
+      </div>
+      <div class="card-row">
+        <span class="label">ATR compression</span>
+        <span class="value ${comprColor(s.atr_compression)}">${s.atr_compression.toFixed(2)}</span>
+      </div>
+      <div class="card-row">
+        <span class="label">Consolidation</span>
+        <span class="value">${s.consol_days}d <span class="v-dim">(${s.consol_label})</span></span>
+      </div>
+      <div class="card-row">
+        <span class="label">HH/HL %</span>
+        <span class="value ${s.hh_hl_pct >= 70 ? 'v-green' : s.hh_hl_pct >= 50 ? '' : 'v-red'}">${s.hh_hl_pct.toFixed(0)}%</span>
+      </div>
+      <div class="card-row">
+        <span class="label">Candle quality</span>
+        <span class="value ${candleColor(s.candle_label)}">${s.candle_quality.toFixed(2)} <span class="v-dim">(${s.candle_label})</span></span>
+      </div>
+      ${s.has_pole ? `<div class="card-row"><span class="label">Pole magnitude</span><span class="value v-purple">${s.pole_magnitude.toFixed(1)}%</span></div>` : ''}
+      <div class="card-divider"></div>
+      <div class="card-row">
+        <span class="label">Breakout level</span>
+        <span class="value ${levelColor(s.level_type)}">${s.level_label || '\u2014'} ${s.level_value != null ? '$' + s.level_value.toFixed(2) : ''}</span>
+      </div>
+      <div class="card-row">
+        <span class="label">ATR to level</span>
+        <span class="value">${s.atr_from_level != null ? s.atr_from_level.toFixed(1) : '\u2014'} <span class="v-dim">${s.abr_dist_label || ''}</span></span>
+      </div>
+      ${s.weekly_confluence && s.weekly_confluence !== 'none' ? `
+      <div class="card-row">
+        <span class="label">Weekly</span>
+        <span class="value ${confluenceColor(s.weekly_confluence)}">${s.weekly_confluence_label}</span>
+      </div>` : ''}
+      <div class="card-divider"></div>
+      <div class="card-row">
+        <span class="label">ABR (21d)</span>
+        <span class="value">$${s.abr != null ? s.abr.toFixed(2) : '\u2014'}</span>
+      </div>
+      <div class="card-row">
+        <span class="label">Float</span>
+        <span class="value">${fmtFloat(s.float_shares)} <span class="v-dim">${s.float_label || ''}</span></span>
+      </div>
+      <div class="card-row">
+        <span class="label">Short interest</span>
+        <span class="value">${fmtPct(s.short_pct_float)}</span>
+      </div>
+    </div>
+  `).join('');
+
+  document.getElementById('visible-count').textContent = data.length + ' shown';
+}
+
+// ── Filter + Sort ────────────────────────────────
+function update() {
+  const search = document.getElementById('search').value.toUpperCase();
+  const sortBy = document.getElementById('sort-by').value;
+  const emaFilter = document.getElementById('filter-ema').value;
+  const sectorFilter = document.getElementById('filter-sector').value;
+
+  let filtered = DATA.filter(s => {
+    if (search && !s.ticker.includes(search) && !(s.name || '').toUpperCase().includes(search)) return false;
+    if (emaFilter !== 'all') {
+      const allowed = emaFilter.split(',');
+      if (!allowed.includes(s.ema_stack)) return false;
+    }
+    if (sectorFilter !== 'all' && (s.sector || 'Unknown') !== sectorFilter) return false;
+    return true;
+  });
+
+  // Sort — 'rank' preserves the pre-sorted order from Python
+  if (sortBy !== 'rank') {
+    const ascending = ['atr_compression'];
+    filtered.sort((a, b) => {
+      let va = a[sortBy] ?? -Infinity;
+      let vb = b[sortBy] ?? -Infinity;
+      return ascending.includes(sortBy) ? va - vb : vb - va;
+    });
+  }
+
+  renderCards(filtered);
+}
+
+// ── Init ─────────────────────────────────────────
+(function init() {
+  // Populate sector filter
+  const sectors = [...new Set(DATA.map(s => s.sector || 'Unknown'))].sort();
+  const sel = document.getElementById('filter-sector');
+  sectors.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s; opt.textContent = s;
+    sel.appendChild(opt);
+  });
+
+  document.getElementById('search').addEventListener('input', update);
+  document.getElementById('sort-by').addEventListener('change', update);
+  document.getElementById('filter-ema').addEventListener('change', update);
+  document.getElementById('filter-sector').addEventListener('change', update);
+
+  update();
+})();
+</script>
+</body>
+</html>
