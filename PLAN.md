@@ -58,23 +58,26 @@ The flowchart at `~/Downloads/Qullamaggie Scanner Flowchart.html` defines the fu
 | 20 | Performance: parallel profile fetch (8x faster), weekly resampling optimization | DONE |
 | 21 | Historical comparison: load prior scan, NEW badges, rank change arrows | DONE |
 
+### Phase 4 — Precision & Effectiveness
+
+| Step | What | Status |
+|------|------|--------|
+| 22 | Mini charts: inline candlestick sparklines on each dashboard card (matplotlib) | DONE |
+| 23 | Earnings date integration: yfinance calendar → catalyst classification + next earnings | DONE |
+| 24 | Historical result tracking: measure post-scan outcomes at 1/3/5/10 day horizons | DONE |
+| 25 | Sector rotation overlay: sector heat map showing RS leaders, ATH density | DONE |
+| 26 | Intraday price alerts: `--watch` mode, polls prices, macOS notifications on breakout | DONE |
+
 ## Where we are now
 
-**Phase 2 nearly complete — steps 13, 15-18 done.** The scanner runs end-to-end in ~20 seconds (cached):
-- All Phase 1 functionality plus:
-- Catalyst detection via volume spike proxy with freshness scoring (tier/halflife decay + extension)
-- Volume pace (vs 50-day avg), ABR distance to breakout level, flag volume contraction
-- Breakout level classification (ATH > multi-year > 52wk > prior resistance)
-- Weekly chart confirmation (coiling/breakout confluence with daily)
-- Full 3-tier ranking: catalyst freshness → factor quality count → ABR distance
-- Dashboard shows all new sections: catalyst, volume, breakout level, weekly confluence
-
-**All phases complete — steps 1-21 done.** The scanner is fully functional:
+**All phases complete (steps 1-26).** Full feature set:
 - Full factor suite (catalyst, volume, consolidation, RS, breakout level, weekly)
 - Sector RS comparison (vs per-sector ETF)
 - 3-tier ranking with 11 quality factors
-- Dashboard with clickable charts, filters, sort, historical deltas
-- ~12 seconds cached, ~4 min first run
+- Dashboard: mini candlestick charts, sector heat map, track record, historical deltas
+- Earnings date integration with catalyst classification
+- Intraday `--watch` mode with macOS notifications on breakout
+- ~14 seconds cached, ~4 min first run
 
 ## Known issues
 

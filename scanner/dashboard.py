@@ -66,6 +66,8 @@ def generate_dashboard(
     market_context: dict,
     watchlist: list[dict],
     universe_size: int,
+    track_record: dict | None = None,
+    sector_heat: list[dict] | None = None,
 ) -> Path:
     """Render the dashboard HTML and return the output path."""
     env = Environment(
@@ -81,6 +83,8 @@ def generate_dashboard(
     html = template.render(
         market_context=market_context,
         watchlist_json=json.dumps(watchlist, default=str),
+        track_record_json=json.dumps(track_record or {}, default=str),
+        sector_heat_json=json.dumps(sector_heat or [], default=str),
         watchlist_count=len(watchlist),
         universe_size=universe_size,
         generated_date=date_str,

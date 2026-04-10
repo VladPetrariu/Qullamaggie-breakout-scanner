@@ -79,10 +79,15 @@ def fetch_stock_profiles(
 
 
 def _fetch_one(ticker: str) -> dict:
-    """Fetch profile data for a single ticker."""
+    """Fetch profile data + earnings dates for a single ticker."""
     try:
-        info = yf.Ticker(ticker).info or {}
+        t = yf.Ticker(ticker)
+        info = t.info or {}
         float_shares = info.get("floatShares")
+
+        # Earnings dates — most recent past and next upcoming
+        earnings = _parse_earnings(t)
+
         return {
             "float_shares": float_shares,
             "float_label": _float_label(float_shares),
@@ -90,9 +95,46 @@ def _fetch_one(ticker: str) -> dict:
             "short_ratio": info.get("shortRatio"),
             "sector": info.get("sector"),
             "industry": info.get("industry"),
+            **earnings,
         }
     except Exception:
         return {}
+
+
+def _parse_earnings(t: yf.Ticker) -> dict:
+    """Extract next upcoming earnings date from yfinance calendar."""
+    try:
+        cal = t.calendar
+        if not cal or "Earnings Date" not in cal:
+            return {"next_earnings": None, "earnings_days_ago": None}
+
+        dates = cal["Earnings Date"]
+        if not dates:
+            return {"next_earnings": None, "earnings_days_ago": None}
+
+        # calendar returns a list of dates (usually 1-2)
+        import datetime
+        today = datetime.date.today()
+
+        # Find next future and most recent past earnings
+        next_dt = None
+        last_dt = None
+        for d in (dates if isinstance(dates, list) else [dates]):
+            if isinstance(d, datetime.datetime):
+                d = d.date()
+            if d >= today and (next_dt is None or d < next_dt):
+                next_dt = d
+            if d < today and (last_dt is None or d > last_dt):
+                last_dt = d
+
+        days_ago = (today - last_dt).days if last_dt is not None else None
+
+        return {
+            "next_earnings": str(next_dt) if next_dt else None,
+            "earnings_days_ago": days_ago,
+        }
+    except Exception:
+        return {"next_earnings": None, "earnings_days_ago": None}
 
 
 def _float_label(shares: int | None) -> str:

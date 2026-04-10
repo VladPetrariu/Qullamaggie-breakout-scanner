@@ -26,9 +26,39 @@ body {
 }
 
 /* ── Header ────────────────────────────────────── */
-.header { margin-bottom: 16px; }
+.header { margin-bottom: 16px; display: flex; justify-content: space-between; align-items: flex-start; }
 .header h1 { font-size: 20px; font-weight: 600; }
 .header .meta { font-size: 13px; color: var(--text-dim); }
+.help-btn {
+  background: var(--card); color: var(--text-dim); border: 1px solid var(--card-border);
+  width: 32px; height: 32px; border-radius: 50%; font-size: 16px; font-weight: 700;
+  cursor: pointer; flex-shrink: 0;
+}
+.help-btn:hover { border-color: var(--blue); color: var(--text); }
+
+/* ── Legend Modal ──────────────────────────────── */
+.modal-overlay {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+  z-index: 100; overflow-y: auto; padding: 20px;
+}
+.modal-overlay.open { display: flex; justify-content: center; align-items: flex-start; }
+.modal {
+  background: var(--card); border: 1px solid var(--card-border); border-radius: 12px;
+  max-width: 720px; width: 100%; padding: 28px 32px; margin-top: 40px;
+  position: relative;
+}
+.modal h2 { font-size: 18px; margin-bottom: 16px; }
+.modal h3 { font-size: 14px; color: var(--blue); margin: 18px 0 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+.modal p, .modal li { font-size: 13px; color: var(--text-dim); line-height: 1.7; }
+.modal ul { padding-left: 18px; }
+.modal li { margin-bottom: 4px; }
+.modal .term { color: var(--text); font-weight: 500; }
+.modal .close-btn {
+  position: absolute; top: 16px; right: 20px; background: none; border: none;
+  color: var(--text-dim); font-size: 22px; cursor: pointer;
+}
+.modal .close-btn:hover { color: var(--text); }
+.modal .color-sample { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
 
 /* ── Market Context Banner ─────────────────────── */
 .banner {
@@ -89,6 +119,10 @@ body {
 }
 .card-top .ticker a:hover { color: var(--blue); }
 .card-top .sector { font-size: 11px; color: var(--text-dim); }
+.card-chart {
+  width: 100%; border-radius: 4px; margin-bottom: 8px;
+  display: block;
+}
 .badge-new {
   display: inline-block; font-size: 10px; font-weight: 700;
   background: var(--green); color: #000; padding: 1px 5px;
@@ -132,8 +166,131 @@ body {
 <body>
 
 <div class="header">
-  <h1>Qullamaggie Breakout Scanner</h1>
-  <div class="meta">{{ generated_date }} {{ generated_time }} &middot; {{ universe_size }} stocks scanned &middot; {{ watchlist_count }} with factor data</div>
+  <div>
+    <h1>Qullamaggie Breakout Scanner</h1>
+    <div class="meta">{{ generated_date }} {{ generated_time }} &middot; {{ universe_size }} stocks scanned &middot; {{ watchlist_count }} with factor data</div>
+  </div>
+  <button class="help-btn" onclick="document.getElementById('legend').classList.add('open')" title="How it works">?</button>
+</div>
+
+<!-- Legend Modal -->
+<div class="modal-overlay" id="legend" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal">
+    <button class="close-btn" onclick="document.getElementById('legend').classList.remove('open')">&times;</button>
+    <h2>How This Scanner Works</h2>
+    <p>This scanner finds momentum breakout setups across ~2,300 NYSE/NASDAQ stocks using Kristjan Kullamägi's (Qullamaggie) methodology. It does not give buy/sell signals — it organizes raw data so you can make your own decisions.</p>
+
+    <h3>Market Regime (top banner)</h3>
+    <p>The regime is a broad market health check based on 5 breadth indicators. It determines how aggressively you should trade:</p>
+    <ul>
+      <li><span class="term" style="color:var(--green)">Favorable</span> — Most stocks are in uptrends, VIX is low, breakouts are following through. Full confidence to trade setups.</li>
+      <li><span class="term" style="color:var(--yellow)">Mixed</span> — Market is split. Some sectors strong, others weak. Be selective, focus on leading sectors.</li>
+      <li><span class="term" style="color:var(--orange)">Caution</span> — Breadth is deteriorating. Only trade the highest-conviction setups with the best factors.</li>
+      <li><span class="term" style="color:var(--red)">Risk Off</span> — Market is in crisis. No setups are shown. Cash is the position.</li>
+    </ul>
+    <p>The 5 indicators: % of stocks above 50-day MA, % above 20-day MA, new 52-week highs vs lows ratio, VIX level and direction, and recent breakout follow-through rate.</p>
+
+    <h3>Sector Rotation</h3>
+    <p>Shows which sectors have the most stocks near all-time highs and catalyst activity. Based on the top 50 ranked stocks that have profile data. Brighter green = more breakout activity in that sector. Focus your attention on leading sectors.</p>
+
+    <h3>Chart (on each card)</h3>
+    <p>60-day candlestick chart with 3 EMA lines:</p>
+    <ul>
+      <li><span class="color-sample" style="background:var(--blue)"></span> <span class="term">Blue</span> — 10-day EMA (fast)</li>
+      <li><span class="color-sample" style="background:var(--yellow)"></span> <span class="term">Yellow</span> — 20-day EMA (medium)</li>
+      <li><span class="color-sample" style="background:var(--purple)"></span> <span class="term">Purple</span> — 50-day EMA (slow)</li>
+      <li><span class="term">Dashed line</span> — breakout level (resistance)</li>
+    </ul>
+    <p>Green candles = up day, red = down day. Volume bars along the bottom.</p>
+
+    <h3>Catalyst</h3>
+    <ul>
+      <li><span class="term">Freshness score (0-1)</span> — How fresh the catalyst is. Combines age decay (how many days ago) with extension (how far price has already moved). Higher = fresher catalyst with more room to run.</li>
+      <li><span class="term" style="color:var(--green)">Early (0.75-1.0)</span> — Fresh catalyst, minimal extension</li>
+      <li><span class="term" style="color:var(--blue)">Active (0.5-0.75)</span> — Still developing</li>
+      <li><span class="term" style="color:var(--yellow)">Late (0.25-0.5)</span> — Most of the move likely done</li>
+      <li><span class="term" style="color:var(--red)">Dead (&lt;0.25)</span> — Catalyst exhausted</li>
+      <li><span class="term">Vol spike</span> — How many times above the 20-day average volume the catalyst day was. Higher = more significant event. "(earnings)" label means the spike coincided with an earnings report.</li>
+    </ul>
+
+    <h3>Volume</h3>
+    <ul>
+      <li><span class="term">Volume pace</span> — Today's volume vs 50-day average. &gt;3x = strong, &gt;5x = extreme.</li>
+      <li><span class="term">Flag volume</span> — Volume during the last 5 days vs the 5 days before. &lt;0.5x (dry up) is ideal — means volume is contracting during consolidation, building energy for the breakout.</li>
+    </ul>
+
+    <h3>Relative Strength (RS)</h3>
+    <ul>
+      <li><span class="term">RS percentile</span> — How this stock's 20-day ATR-normalized return ranks vs the full ~2,300 stock universe. 90th+ percentile = top 10% strongest stocks.</li>
+      <li><span class="term">RS direction</span> — Change in RS percentile over the last 5 days. Rising RS (green arrow) is the most actionable signal.</li>
+      <li><span class="term">vs SPY</span> — Stock's 20-day return minus SPY's 20-day return. Positive = outperforming the market.</li>
+      <li><span class="term">vs Sector</span> — Same comparison but against the stock's sector ETF. Tells you if it's leading within its sector, not just riding a sector wave.</li>
+    </ul>
+
+    <h3>Consolidation</h3>
+    <ul>
+      <li><span class="term">EMA stack</span> — Whether price is above the 10, 20, and 50 EMAs in order. <span style="color:var(--green)">Full</span> (price &gt; 10 &gt; 20 &gt; 50) = strongest uptrend. Partial/weak = less alignment.</li>
+      <li><span class="term">ATR compression</span> — Short-term volatility / long-term volatility. Values below 0.7 mean the stock is coiling tightly — potential energy building for a move. Lower = tighter = better.</li>
+      <li><span class="term">Consolidation days</span> — How long the stock has been consolidating. 1-2 weeks = strong, 3-4 weeks = very strong, 1-3 months = powerful base.</li>
+      <li><span class="term">HH/HL %</span> — Percentage of consolidation days with higher-highs AND higher-lows. 70%+ = strong upward drift during consolidation.</li>
+      <li><span class="term">Candle quality</span> — Average body-to-range ratio during consolidation. "Ideal" = clean bodies, "barcode" = all wicks (wide stops, harder to trade).</li>
+      <li><span class="term">Pole magnitude</span> — If the stock had a sharp up-move (&gt;20%) before consolidating. This is the classic pole+flag pattern.</li>
+    </ul>
+
+    <h3>Breakout Level</h3>
+    <ul>
+      <li><span class="term" style="color:var(--green)">ATH</span> — All-time high. No overhead supply, maximum conviction.</li>
+      <li><span class="term" style="color:var(--blue)">Multi-Year</span> — 2-5 year high. Minimal supply above.</li>
+      <li><span class="term" style="color:var(--yellow)">52wk High</span> — 52-week high. Solid but some overhead.</li>
+      <li><span class="term" style="color:var(--text-dim)">Prior Resist.</span> — Previous resistance level. Weakest — needs strong factors to compensate.</li>
+      <li><span class="term">ATR to level</span> — How far the current price is from the breakout level, measured in ATR units. Closer to 0 = near the level. Negative = already above it.</li>
+    </ul>
+
+    <h3>Weekly Confluence</h3>
+    <p>Whether the daily and weekly charts are confirming each other:</p>
+    <ul>
+      <li><span class="term" style="color:var(--green)">Max Confluence</span> — Both daily and weekly charts are coiling simultaneously</li>
+      <li><span class="term" style="color:var(--green)">Max Confirmation</span> — Both daily and weekly are breaking out simultaneously</li>
+      <li><span class="term" style="color:var(--blue)">Strong</span> — Weekly coiling while daily is breaking out</li>
+      <li><span class="term" style="color:var(--text-dim)">Context</span> — Weekly uptrend supports the daily setup but isn't confirming</li>
+    </ul>
+
+    <h3>Profile</h3>
+    <ul>
+      <li><span class="term">ABR</span> — 21-day Average Body Range. The average |Close - Open| in dollars. Used to normalize distances and estimate risk.</li>
+      <li><span class="term">Float</span> — Shares available for trading. Micro (&lt;10M) = can move explosively. Large (&gt;100M) = needs institutional buying to move.</li>
+      <li><span class="term">Short interest</span> — % of float sold short. High SI (&gt;25%) with a strong setup = potential squeeze amplifier.</li>
+    </ul>
+
+    <h3>Ranking</h3>
+    <p>Stocks are sorted by a 3-tier system:</p>
+    <ul>
+      <li><span class="term">Primary</span> — Catalyst freshness score (freshest catalysts first)</li>
+      <li><span class="term">Secondary</span> — Factor quality count (how many factors are in their "strong" range)</li>
+      <li><span class="term">Tertiary</span> — ABR distance to breakout level (closer to level = higher)</li>
+    </ul>
+
+    <h3>Filters &amp; Controls</h3>
+    <ul>
+      <li><span class="term">EMA stack filter</span> — "Full stack only" is the default, showing only stocks in the strongest uptrend configuration</li>
+      <li><span class="term">Catalyst filter</span> — "With catalyst" shows only stocks with a recent volume spike. "Fresh catalyst" limits to early/active freshness.</li>
+      <li><span class="term">Level filter</span> — Filter to ATH-only, or include multi-year and 52-week highs</li>
+      <li><span class="term">Sort</span> — "Rank" uses the 3-tier sort. Other options sort by a single factor.</li>
+      <li><span class="term">Keyboard</span> — Press <code>/</code> to focus the search bar</li>
+    </ul>
+
+    <h3>Historical Badges</h3>
+    <ul>
+      <li><span class="badge-new" style="font-size:10px">NEW</span> — Stock was not on yesterday's watchlist</li>
+      <li><span style="color:var(--green)">&#9650;N</span> / <span style="color:var(--red)">&#9660;N</span> — Stock moved up/down N positions in rank vs yesterday</li>
+    </ul>
+
+    <h3>Track Record</h3>
+    <p>When you have scans from multiple days, a "Track Record" banner appears showing win rate and average return at 1, 3, 5, and 10-day horizons for the top 20 ranked stocks from each prior scan. This tells you how well the scanner's picks have historically performed.</p>
+
+    <h3>Watch Mode</h3>
+    <p>Run <code>python -m scanner --watch</code> to monitor your watchlist during market hours. It polls prices every 2 minutes and sends a notification when a stock approaches or breaks its breakout level.</p>
+  </div>
 </div>
 
 <!-- Market Context Banner -->
@@ -157,6 +314,18 @@ body {
     {% endif %}
     <span>Breakout follow-through: <span class="val">{{ market_context.breakout_followthrough }}%</span></span>
   </div>
+</div>
+
+<!-- Sector Heat Map -->
+<div id="sector-heat" style="display:none; margin-bottom:16px;">
+  <div style="font-size:13px; color:var(--text-dim); margin-bottom:8px;">Sector Rotation <span style="font-size:11px;">(top 50 ranked stocks with profile data)</span></div>
+  <div id="sector-grid" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+</div>
+
+<!-- Track Record -->
+<div class="banner" id="track-record" style="display:none">
+  <div class="regime" style="font-size:14px; color: var(--text); text-transform: none; letter-spacing: 0;">Track Record <span class="v-dim" id="track-scans"></span></div>
+  <div class="indicators" id="track-stats"></div>
 </div>
 
 <!-- Controls -->
@@ -202,6 +371,42 @@ body {
 
 <script>
 const DATA = {{ watchlist_json }};
+const TRACK = {{ track_record_json }};
+const SECTORS = {{ sector_heat_json }};
+
+// ── Sector Heat Map ─────────────────────────────
+(function renderSectorHeat() {
+  if (!SECTORS || SECTORS.length === 0) return;
+  document.getElementById('sector-heat').style.display = '';
+  const grid = document.getElementById('sector-grid');
+  const maxATH = Math.max(...SECTORS.map(s => s.ath_count), 1);
+  grid.innerHTML = SECTORS.map(s => {
+    const intensity = Math.min(s.ath_count / maxATH, 1);
+    const bg = intensity > 0.5 ? `rgba(34,197,94,${0.15 + intensity*0.25})`
+             : intensity > 0 ? `rgba(34,197,94,${0.05 + intensity*0.15})`
+             : 'var(--card)';
+    const border = intensity > 0.3 ? 'rgba(34,197,94,0.4)' : 'var(--card-border)';
+    const rsColor = s.avg_rs >= 60 ? 'v-green' : s.avg_rs <= 40 ? 'v-red' : '';
+    return `<div style="background:${bg}; border:1px solid ${border}; border-radius:6px; padding:8px 12px; font-size:12px; min-width:120px;">
+      <div style="font-weight:600; margin-bottom:2px;">${s.sector}</div>
+      <div class="v-dim">${s.count} stocks</div>
+      <div>${s.ath_count} ATH <span class="v-dim">&middot;</span> ${s.catalyst_count} catalysts</div>
+      <div>Avg RS: <span class="${rsColor}">${s.avg_rs}%</span></div>
+    </div>`;
+  }).join('');
+})();
+
+// ── Track Record ────────────────────────────────
+(function renderTrackRecord() {
+  const ph = TRACK.per_horizon;
+  if (!ph || Object.keys(ph).length === 0) return;
+  document.getElementById('track-record').style.display = '';
+  document.getElementById('track-scans').textContent = `(${TRACK.total_scans} prior scans)`;
+  const el = document.getElementById('track-stats');
+  el.innerHTML = Object.entries(ph).map(([h, s]) =>
+    `<span>${h}d: <span class="val ${s.avg_return >= 0 ? 'v-green' : 'v-red'}">${s.win_rate}% win</span> &middot; <span class="val ${s.avg_return >= 0 ? 'v-green' : 'v-red'}">${s.avg_return > 0 ? '+' : ''}${s.avg_return}% avg</span> <span class="v-dim">(n=${s.n})</span></span>`
+  ).join('');
+})();
 
 // ── Helpers ──────────────────────────────────────
 function rsColor(pct) {
@@ -285,6 +490,7 @@ function renderCards(data) {
         <span class="sector">${s.sector || ''}</span>
       </div>
       <div class="card-name">${s.name || ''}</div>
+      ${s.chart_uri ? `<img class="card-chart" src="${s.chart_uri}" alt="${s.ticker} chart">` : ''}
       ${s.has_catalyst ? `
       <div class="card-row">
         <span class="label">Catalyst</span>
@@ -292,8 +498,9 @@ function renderCards(data) {
       </div>
       <div class="card-row">
         <span class="label">Vol spike</span>
-        <span class="value">${s.catalyst_vol_ratio}x <span class="v-dim">${s.catalyst_age}d ago</span></span>
+        <span class="value">${s.catalyst_vol_ratio}x <span class="v-dim">${s.catalyst_age}d ago${s.catalyst_type === 'earnings' ? ' (earnings)' : ''}</span></span>
       </div>
+      ${s.next_earnings ? `<div class="card-row"><span class="label">Next earnings</span><span class="value v-dim">${s.next_earnings}</span></div>` : ''}
       <div class="card-divider"></div>` : ''}
       <div class="card-row">
         <span class="label">Volume pace</span>

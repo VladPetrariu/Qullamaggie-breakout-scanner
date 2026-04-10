@@ -6,6 +6,7 @@ import time
 from tqdm import tqdm
 
 from .cache import Cache
+from .charts import generate_charts_batch
 from .config import CACHE_DIR, SCANS_DIR
 from .dashboard import compute_deltas, generate_dashboard, load_prior_scan, open_dashboard, save_scan_json
 from .data import download_prices
@@ -18,6 +19,7 @@ from .factors.volume import compute_volume
 from .factors.weekly import compute_weekly
 from .profile import compute_abr, fetch_stock_profiles
 from .ranking import rank_watchlist
+from .tracker import compute_track_record
 from .universe import fetch_ticker_list, fetch_ticker_info, filter_universe
 
 _REGIME_DISPLAY = {
@@ -140,6 +142,21 @@ def main():
         stock["short_ratio"] = profile.get("short_ratio")
         stock["sector"] = profile.get("sector", "")
         stock["industry"] = profile.get("industry", "")
+        stock["next_earnings"] = profile.get("next_earnings")
+        stock["earnings_days_ago"] = profile.get("earnings_days_ago")
+
+        # Classify catalyst as earnings-related if spike happened near earnings
+        earn_ago = stock.get("earnings_days_ago")
+        cat_age = stock.get("catalyst_age")
+        if stock.get("has_catalyst") and earn_ago is not None and cat_age is not None:
+            if abs(earn_ago - cat_age) <= 2:
+                stock["catalyst_type"] = "earnings"
+            else:
+                stock["catalyst_type"] = "other"
+        elif stock.get("has_catalyst"):
+            stock["catalyst_type"] = "unknown"
+        else:
+            stock["catalyst_type"] = None
 
         # Sector RS: compare vs sector ETF instead of SPY
         sector = stock["sector"]
@@ -167,9 +184,47 @@ def main():
             stock["vs_sector"] = None
             stock["vs_sector_label"] = "unknown"
 
-    # ── 8. Dashboard ───────────────────────────────────────────────
+    # ── 8. Charts + Dashboard ─────────────────────────────────────
     print()
-    print("[8/8] Generating dashboard...")
+    print("[8/8] Generating charts and dashboard...")
+    charts = generate_charts_batch(watchlist, price_data, limit=50)
+    print(f"  Generated {len(charts)} mini charts")
+
+    # Attach chart URIs to watchlist entries
+    for stock in watchlist:
+        stock["chart_uri"] = charts.get(stock["ticker"])
+
+    # Sector heat map — aggregate stats per sector from full watchlist
+    sector_map: dict[str, dict] = {}
+    for stock in watchlist:
+        sec = stock.get("sector") or ""
+        if not sec:
+            continue
+        if sec not in sector_map:
+            sector_map[sec] = {"count": 0, "ath": 0, "catalyst": 0, "rs_sum": 0}
+        sector_map[sec]["count"] += 1
+        if stock.get("level_type") == "ath":
+            sector_map[sec]["ath"] += 1
+        if stock.get("has_catalyst"):
+            sector_map[sec]["catalyst"] += 1
+        sector_map[sec]["rs_sum"] += stock.get("rs_percentile", 50)
+
+    sector_heat = []
+    for sec, d in sorted(sector_map.items(), key=lambda x: -x[1]["ath"]):
+        sector_heat.append({
+            "sector": sec,
+            "count": d["count"],
+            "ath_count": d["ath"],
+            "catalyst_count": d["catalyst"],
+            "avg_rs": round(d["rs_sum"] / d["count"], 1) if d["count"] else 50,
+        })
+
+    track_record = compute_track_record(price_data)
+    if track_record["per_horizon"]:
+        print(f"  Track record from {track_record['total_scans']} prior scans:")
+        for h, stats in sorted(track_record["per_horizon"].items()):
+            print(f"    {h:>2}d: {stats['win_rate']}% win rate, avg {stats['avg_return']:+.1f}% (n={stats['n']})")
+
     prior = load_prior_scan()
     watchlist = compute_deltas(watchlist, prior)
     if prior:
@@ -177,7 +232,7 @@ def main():
         new_count = sum(1 for s in watchlist if s.get("is_new"))
         print(f"  Compared with prior scan: {new_count} new entries (was {prior_count} stocks)")
     json_path = save_scan_json(ctx, watchlist)
-    html_path = generate_dashboard(ctx, watchlist, len(universe))
+    html_path = generate_dashboard(ctx, watchlist, len(universe), track_record, sector_heat)
     print(f"  JSON: {json_path}")
     print(f"  HTML: {html_path}")
 
@@ -204,4 +259,8 @@ def _print_market_context(ctx):
 
 
 if __name__ == "__main__":
-    main()
+    if "--watch" in sys.argv:
+        from .watcher import watch
+        watch()
+    else:
+        main()
