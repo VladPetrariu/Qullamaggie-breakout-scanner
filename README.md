@@ -17,6 +17,14 @@ Scans **~2,300 liquid stocks** every morning, computes **6 factor categories** a
 
 > **Philosophy:** The scanner organizes the homework — *you* decide every trade. Raw values only, no composite scores, no buy/sell signals.
 
+<p align="center">
+  <img src="docs/dashboard-overview.png" alt="Dashboard overview — market context, sector heat map, and stock cards with mini charts" width="100%">
+</p>
+
+<p align="center">
+  <img src="docs/stock-cards.png" alt="Stock cards showing candlestick charts, factor values, and breakout levels" width="100%">
+</p>
+
 ## Features
 
 - **Full universe coverage** — fetches every NYSE/NASDAQ ticker from SEC EDGAR, filters to liquid names ($5+ price, 500K+ daily volume)
