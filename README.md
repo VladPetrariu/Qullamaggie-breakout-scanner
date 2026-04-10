@@ -25,6 +25,38 @@ Scans **~2,300 liquid stocks** every morning, computes **6 factor categories** a
   <img width="1509" height="826" alt="Screenshot 2026-04-10 at 1 50 46 PM" src="https://github.com/user-attachments/assets/0fdab515-35fe-41a3-b64e-808c85d9157f" />
 </p>
 
+## High-Level Overview
+
+**The stock market has ~7,000 stocks listed on the two major US exchanges (NYSE and NASDAQ).** Every day, some of those stocks are about to make big moves — breakouts — where the price suddenly jumps up after sitting still for a while. Traders who catch these moves early can make money.
+
+The problem is finding them. You'd have to look at thousands of charts every morning before the market opens at 9:30 AM. Nobody has time for that.
+
+**This scanner does that work for you.** It downloads price data for all ~7,000 stocks, filters down to ~2,300 that are liquid enough to trade, runs each one through a checklist of factors that indicate a breakout might be coming, ranks them, and shows you the top results in a visual dashboard.
+
+### What the factors mean in plain English
+
+- **Market regime** — Is the overall market healthy? If most stocks are falling, even good setups tend to fail. The scanner checks 5 health indicators and classifies the market as Favorable, Mixed, Caution, or Risk Off (don't trade at all).
+- **Catalyst** — Did something happen to this stock recently? The scanner detects days where trading volume was 3x+ normal and scores how "fresh" the catalyst is.
+- **Consolidation** — After a stock runs up, it often pauses and trades sideways (like a spring coiling). The tighter and cleaner that pause, the more likely the next breakout is explosive. The scanner measures how tight the range is, how clean the price action looks, and whether the moving averages are lined up.
+- **Relative strength** — Is this stock stronger than most other stocks? If the market is flat but this stock is quietly rising, that's a sign of underlying demand.
+- **Breakout level** — Where is the stock trying to break out? An all-time high is the strongest because there's nobody above wanting to sell. A 52-week high is decent. Old resistance is weaker.
+- **Weekly confirmation** — Is the weekly chart also setting up, not just the daily? When both timeframes align, the move tends to be bigger.
+
+### What you can do with the results
+
+**If you trade stocks:**
+- Run it every morning before market open
+- Look through the top-ranked cards and their charts
+- Pick the 3-5 best setups for your watchlist
+- Use `python -m scanner --watch` during the day — it'll notify you when a stock approaches its breakout level
+- Over time, the track record feature shows how well the scanner's top picks performed historically
+
+**If you're a developer:**
+- It's a full data pipeline project (API ingestion → computation → visualization)
+- Demonstrates pandas, matplotlib, yfinance, Jinja2 templating, caching, threading
+
+**What it does NOT do:** It does not tell you to buy or sell. It does not place trades. It does not guarantee profits. It organizes data so a human can make faster, more informed decisions.
+
 ## Features
 
 - **Full universe coverage** — fetches every NYSE/NASDAQ ticker from SEC EDGAR, filters to liquid names ($5+ price, 500K+ daily volume)
