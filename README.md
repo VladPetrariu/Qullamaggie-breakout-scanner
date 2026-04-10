@@ -18,11 +18,11 @@ Scans **~2,300 liquid stocks** every morning, computes **6 factor categories** a
 > **Philosophy:** The scanner organizes the homework — *you* decide every trade. Raw values only, no composite scores, no buy/sell signals.
 
 <p align="center">
-  <img src="docs/dashboard-overview.png" alt="Dashboard overview — market context, sector heat map, and stock cards with mini charts" width="100%">
+  <img width="1508" height="830" alt="Screenshot 2026-04-10 at 1 50 34 PM" src="https://github.com/user-attachments/assets/4ad51c8b-aa82-4cde-9155-b8bf13fbffde" />
 </p>
 
 <p align="center">
-  <img src="docs/stock-cards.png" alt="Stock cards showing candlestick charts, factor values, and breakout levels" width="100%">
+  <img width="1509" height="826" alt="Screenshot 2026-04-10 at 1 50 46 PM" src="https://github.com/user-attachments/assets/0fdab515-35fe-41a3-b64e-808c85d9157f" />
 </p>
 
 ## Features
