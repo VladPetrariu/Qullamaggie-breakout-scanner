@@ -265,5 +265,8 @@ if __name__ == "__main__":
     elif "--backtest" in sys.argv:
         from .backtest import run_backtest
         run_backtest()
+    elif "--analyze" in sys.argv:
+        from .backtest import run_combination_analysis
+        run_combination_analysis()
     else:
         main()

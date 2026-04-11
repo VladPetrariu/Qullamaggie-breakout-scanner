@@ -1,0 +1,768 @@
+{
+  "baseline": {
+    "n": 2399,
+    "win_rate": 51.2,
+    "avg": -0.33,
+    "median": 0.05
+  },
+  "conditions_tested": [
+    "ath_level",
+    "flag_dryup",
+    "good_candle",
+    "has_pole",
+    "high_hh_hl",
+    "high_rs",
+    "high_vol",
+    "not_fresh",
+    "rs_up",
+    "strong_ema",
+    "tight_atr",
+    "weekly_conf"
+  ],
+  "min_picks": 50,
+  "horizon": 5,
+  "singles": [
+    {
+      "combo": [
+        "high_hh_hl"
+      ],
+      "n": 670,
+      "win_rate": 57.5,
+      "avg": 0.63,
+      "median": 0.15
+    },
+    {
+      "combo": [
+        "high_vol"
+      ],
+      "n": 197,
+      "win_rate": 54.8,
+      "avg": -0.34,
+      "median": 0.07
+    },
+    {
+      "combo": [
+        "high_rs"
+      ],
+      "n": 1490,
+      "win_rate": 53.2,
+      "avg": -0.06,
+      "median": 0.08
+    },
+    {
+      "combo": [
+        "weekly_conf"
+      ],
+      "n": 755,
+      "win_rate": 52.7,
+      "avg": -0.03,
+      "median": 0.07
+    },
+    {
+      "combo": [
+        "strong_ema"
+      ],
+      "n": 1745,
+      "win_rate": 51.6,
+      "avg": -0.17,
+      "median": 0.05
+    },
+    {
+      "combo": [
+        "tight_atr"
+      ],
+      "n": 808,
+      "win_rate": 51.4,
+      "avg": -1.09,
+      "median": 0.03
+    },
+    {
+      "combo": [
+        "not_fresh"
+      ],
+      "n": 2399,
+      "win_rate": 51.2,
+      "avg": -0.33,
+      "median": 0.05
+    },
+    {
+      "combo": [
+        "ath_level"
+      ],
+      "n": 1360,
+      "win_rate": 50.8,
+      "avg": -0.2,
+      "median": 0.03
+    },
+    {
+      "combo": [
+        "flag_dryup"
+      ],
+      "n": 1301,
+      "win_rate": 49.5,
+      "avg": -0.51,
+      "median": 0.0
+    },
+    {
+      "combo": [
+        "rs_up"
+      ],
+      "n": 962,
+      "win_rate": 49.3,
+      "avg": -0.29,
+      "median": 0.0
+    },
+    {
+      "combo": [
+        "good_candle"
+      ],
+      "n": 1066,
+      "win_rate": 47.9,
+      "avg": -0.38,
+      "median": -0.03
+    },
+    {
+      "combo": [
+        "has_pole"
+      ],
+      "n": 1193,
+      "win_rate": 46.5,
+      "avg": -1.21,
+      "median": -0.06
+    }
+  ],
+  "top_pairs": [
+    {
+      "combo": [
+        "high_hh_hl",
+        "high_vol"
+      ],
+      "n": 62,
+      "win_rate": 61.3,
+      "avg": 0.61,
+      "median": 0.14
+    },
+    {
+      "combo": [
+        "high_hh_hl",
+        "high_rs"
+      ],
+      "n": 449,
+      "win_rate": 59.7,
+      "avg": 0.64,
+      "median": 0.15
+    },
+    {
+      "combo": [
+        "good_candle",
+        "high_hh_hl"
+      ],
+      "n": 278,
+      "win_rate": 59.0,
+      "avg": 0.99,
+      "median": 0.21
+    },
+    {
+      "combo": [
+        "ath_level",
+        "high_hh_hl"
+      ],
+      "n": 418,
+      "win_rate": 58.6,
+      "avg": 0.95,
+      "median": 0.18
+    },
+    {
+      "combo": [
+        "flag_dryup",
+        "high_hh_hl"
+      ],
+      "n": 326,
+      "win_rate": 58.6,
+      "avg": 0.7,
+      "median": 0.15
+    },
+    {
+      "combo": [
+        "has_pole",
+        "high_hh_hl"
+      ],
+      "n": 253,
+      "win_rate": 58.5,
+      "avg": 1.04,
+      "median": 0.1
+    },
+    {
+      "combo": [
+        "high_hh_hl",
+        "tight_atr"
+      ],
+      "n": 237,
+      "win_rate": 58.2,
+      "avg": 0.16,
+      "median": 0.07
+    },
+    {
+      "combo": [
+        "high_hh_hl",
+        "not_fresh"
+      ],
+      "n": 670,
+      "win_rate": 57.5,
+      "avg": 0.63,
+      "median": 0.15
+    },
+    {
+      "combo": [
+        "high_vol",
+        "weekly_conf"
+      ],
+      "n": 89,
+      "win_rate": 57.3,
+      "avg": -0.65,
+      "median": 0.12
+    },
+    {
+      "combo": [
+        "high_rs",
+        "high_vol"
+      ],
+      "n": 152,
+      "win_rate": 56.6,
+      "avg": 0.03,
+      "median": 0.08
+    },
+    {
+      "combo": [
+        "high_vol",
+        "tight_atr"
+      ],
+      "n": 116,
+      "win_rate": 56.0,
+      "avg": -0.57,
+      "median": 0.07
+    },
+    {
+      "combo": [
+        "high_vol",
+        "strong_ema"
+      ],
+      "n": 162,
+      "win_rate": 55.6,
+      "avg": -0.08,
+      "median": 0.07
+    },
+    {
+      "combo": [
+        "tight_atr",
+        "weekly_conf"
+      ],
+      "n": 402,
+      "win_rate": 55.0,
+      "avg": 0.3,
+      "median": 0.08
+    },
+    {
+      "combo": [
+        "high_vol",
+        "not_fresh"
+      ],
+      "n": 197,
+      "win_rate": 54.8,
+      "avg": -0.34,
+      "median": 0.07
+    },
+    {
+      "combo": [
+        "strong_ema",
+        "tight_atr"
+      ],
+      "n": 647,
+      "win_rate": 54.7,
+      "avg": -0.3,
+      "median": 0.06
+    },
+    {
+      "combo": [
+        "high_rs",
+        "tight_atr"
+      ],
+      "n": 613,
+      "win_rate": 54.5,
+      "avg": -0.41,
+      "median": 0.05
+    },
+    {
+      "combo": [
+        "high_hh_hl",
+        "strong_ema"
+      ],
+      "n": 566,
+      "win_rate": 54.4,
+      "avg": 0.3,
+      "median": 0.07
+    },
+    {
+      "combo": [
+        "high_rs",
+        "strong_ema"
+      ],
+      "n": 1283,
+      "win_rate": 53.5,
+      "avg": 0.05,
+      "median": 0.07
+    },
+    {
+      "combo": [
+        "high_rs",
+        "weekly_conf"
+      ],
+      "n": 546,
+      "win_rate": 53.5,
+      "avg": -0.03,
+      "median": 0.08
+    },
+    {
+      "combo": [
+        "has_pole",
+        "weekly_conf"
+      ],
+      "n": 365,
+      "win_rate": 53.4,
+      "avg": -0.12,
+      "median": 0.07
+    },
+    {
+      "combo": [
+        "high_hh_hl",
+        "weekly_conf"
+      ],
+      "n": 235,
+      "win_rate": 53.2,
+      "avg": -0.38,
+      "median": 0.07
+    },
+    {
+      "combo": [
+        "high_rs",
+        "not_fresh"
+      ],
+      "n": 1490,
+      "win_rate": 53.2,
+      "avg": -0.06,
+      "median": 0.08
+    },
+    {
+      "combo": [
+        "not_fresh",
+        "weekly_conf"
+      ],
+      "n": 755,
+      "win_rate": 52.7,
+      "avg": -0.03,
+      "median": 0.07
+    },
+    {
+      "combo": [
+        "rs_up",
+        "weekly_conf"
+      ],
+      "n": 291,
+      "win_rate": 52.6,
+      "avg": -0.29,
+      "median": 0.08
+    },
+    {
+      "combo": [
+        "strong_ema",
+        "weekly_conf"
+      ],
+      "n": 632,
+      "win_rate": 52.4,
+      "avg": -0.15,
+      "median": 0.06
+    },
+    {
+      "combo": [
+        "high_hh_hl",
+        "rs_up"
+      ],
+      "n": 266,
+      "win_rate": 52.3,
+      "avg": 0.04,
+      "median": 0.04
+    },
+    {
+      "combo": [
+        "flag_dryup",
+        "high_rs"
+      ],
+      "n": 796,
+      "win_rate": 51.6,
+      "avg": -0.05,
+      "median": 0.04
+    },
+    {
+      "combo": [
+        "flag_dryup",
+        "high_vol"
+      ],
+      "n": 64,
+      "win_rate": 51.6,
+      "avg": -1.29,
+      "median": 0.04
+    },
+    {
+      "combo": [
+        "flag_dryup",
+        "weekly_conf"
+      ],
+      "n": 306,
+      "win_rate": 51.6,
+      "avg": 0.43,
+      "median": 0.04
+    },
+    {
+      "combo": [
+        "not_fresh",
+        "strong_ema"
+      ],
+      "n": 1745,
+      "win_rate": 51.6,
+      "avg": -0.17,
+      "median": 0.05
+    }
+  ],
+  "top_trios": [
+    {
+      "combo": [
+        "flag_dryup",
+        "good_candle",
+        "high_hh_hl"
+      ],
+      "n": 141,
+      "win_rate": 63.8,
+      "avg": 1.54,
+      "median": 0.25
+    },
+    {
+      "combo": [
+        "high_hh_hl",
+        "high_rs",
+        "high_vol"
+      ],
+      "n": 50,
+      "win_rate": 62.0,
+      "avg": 0.16,
+      "median": 0.14
+    },
+    {
+      "combo": [
+        "flag_dryup",
+        "high_hh_hl",
+        "tight_atr"
+      ],
+      "n": 133,
+      "win_rate": 61.7,
+      "avg": 0.19,
+      "median": 0.1
+    },
+    {
+      "combo": [
+        "high_hh_hl",
+        "high_vol",
+        "not_fresh"
+      ],
+      "n": 62,
+      "win_rate": 61.3,
+      "avg": 0.61,
+      "median": 0.14
+    },
+    {
+      "combo": [
+        "good_candle",
+        "high_hh_hl",
+        "tight_atr"
+      ],
+      "n": 73,
+      "win_rate": 60.3,
+      "avg": 0.56,
+      "median": 0.1
+    },
+    {
+      "combo": [
+        "has_pole",
+        "high_hh_hl",
+        "tight_atr"
+      ],
+      "n": 143,
+      "win_rate": 60.1,
+      "avg": 0.29,
+      "median": 0.07
+    },
+    {
+      "combo": [
+        "high_hh_hl",
+        "high_rs",
+        "not_fresh"
+      ],
+      "n": 449,
+      "win_rate": 59.7,
+      "avg": 0.64,
+      "median": 0.15
+    },
+    {
+      "combo": [
+        "ath_level",
+        "high_hh_hl",
+        "high_rs"
+      ],
+      "n": 259,
+      "win_rate": 59.5,
+      "avg": 0.73,
+      "median": 0.13
+    },
+    {
+      "combo": [
+        "flag_dryup",
+        "high_hh_hl",
+        "high_rs"
+      ],
+      "n": 215,
+      "win_rate": 59.5,
+      "avg": 0.62,
+      "median": 0.12
+    },
+    {
+      "combo": [
+        "high_hh_hl",
+        "high_vol",
+        "strong_ema"
+      ],
+      "n": 54,
+      "win_rate": 59.3,
+      "avg": 0.39,
+      "median": 0.07
+    },
+    {
+      "combo": [
+        "has_pole",
+        "high_hh_hl",
+        "high_rs"
+      ],
+      "n": 228,
+      "win_rate": 59.2,
+      "avg": 1.13,
+      "median": 0.1
+    },
+    {
+      "combo": [
+        "high_hh_hl",
+        "high_rs",
+        "strong_ema"
+      ],
+      "n": 424,
+      "win_rate": 59.2,
+      "avg": 0.6,
+      "median": 0.15
+    },
+    {
+      "combo": [
+        "ath_level",
+        "good_candle",
+        "high_hh_hl"
+      ],
+      "n": 181,
+      "win_rate": 59.1,
+      "avg": 1.18,
+      "median": 0.19
+    },
+    {
+      "combo": [
+        "good_candle",
+        "high_hh_hl",
+        "not_fresh"
+      ],
+      "n": 278,
+      "win_rate": 59.0,
+      "avg": 0.99,
+      "median": 0.21
+    },
+    {
+      "combo": [
+        "ath_level",
+        "high_hh_hl",
+        "not_fresh"
+      ],
+      "n": 418,
+      "win_rate": 58.6,
+      "avg": 0.95,
+      "median": 0.18
+    },
+    {
+      "combo": [
+        "flag_dryup",
+        "high_hh_hl",
+        "not_fresh"
+      ],
+      "n": 326,
+      "win_rate": 58.6,
+      "avg": 0.7,
+      "median": 0.15
+    },
+    {
+      "combo": [
+        "has_pole",
+        "high_hh_hl",
+        "not_fresh"
+      ],
+      "n": 253,
+      "win_rate": 58.5,
+      "avg": 1.04,
+      "median": 0.1
+    },
+    {
+      "combo": [
+        "high_rs",
+        "high_vol",
+        "tight_atr"
+      ],
+      "n": 101,
+      "win_rate": 58.4,
+      "avg": 0.15,
+      "median": 0.08
+    },
+    {
+      "combo": [
+        "high_hh_hl",
+        "strong_ema",
+        "tight_atr"
+      ],
+      "n": 228,
+      "win_rate": 58.3,
+      "avg": 0.14,
+      "median": 0.07
+    },
+    {
+      "combo": [
+        "has_pole",
+        "high_hh_hl",
+        "strong_ema"
+      ],
+      "n": 244,
+      "win_rate": 58.2,
+      "avg": 0.83,
+      "median": 0.08
+    },
+    {
+      "combo": [
+        "high_hh_hl",
+        "not_fresh",
+        "tight_atr"
+      ],
+      "n": 237,
+      "win_rate": 58.2,
+      "avg": 0.16,
+      "median": 0.07
+    },
+    {
+      "combo": [
+        "good_candle",
+        "rs_up",
+        "tight_atr"
+      ],
+      "n": 117,
+      "win_rate": 58.1,
+      "avg": 0.96,
+      "median": 0.18
+    },
+    {
+      "combo": [
+        "high_hh_hl",
+        "high_rs",
+        "tight_atr"
+      ],
+      "n": 193,
+      "win_rate": 58.0,
+      "avg": 0.04,
+      "median": 0.07
+    },
+    {
+      "combo": [
+        "high_hh_hl",
+        "rs_up",
+        "tight_atr"
+      ],
+      "n": 64,
+      "win_rate": 57.8,
+      "avg": -0.58,
+      "median": 0.04
+    },
+    {
+      "combo": [
+        "good_candle",
+        "high_hh_hl",
+        "high_rs"
+      ],
+      "n": 168,
+      "win_rate": 57.7,
+      "avg": 0.56,
+      "median": 0.14
+    },
+    {
+      "combo": [
+        "high_hh_hl",
+        "tight_atr",
+        "weekly_conf"
+      ],
+      "n": 118,
+      "win_rate": 57.6,
+      "avg": 0.05,
+      "median": 0.08
+    },
+    {
+      "combo": [
+        "ath_level",
+        "flag_dryup",
+        "high_hh_hl"
+      ],
+      "n": 209,
+      "win_rate": 57.4,
+      "avg": 0.84,
+      "median": 0.11
+    },
+    {
+      "combo": [
+        "ath_level",
+        "high_vol",
+        "weekly_conf"
+      ],
+      "n": 54,
+      "win_rate": 57.4,
+      "avg": -0.72,
+      "median": 0.15
+    },
+    {
+      "combo": [
+        "high_vol",
+        "not_fresh",
+        "weekly_conf"
+      ],
+      "n": 89,
+      "win_rate": 57.3,
+      "avg": -0.65,
+      "median": 0.12
+    },
+    {
+      "combo": [
+        "flag_dryup",
+        "has_pole",
+        "high_hh_hl"
+      ],
+      "n": 145,
+      "win_rate": 57.2,
+      "avg": 0.95,
+      "median": 0.08
+    }
+  ]
+}

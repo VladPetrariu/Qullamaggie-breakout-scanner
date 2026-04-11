@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import time
+from itertools import combinations
 from pathlib import Path
 
 import numpy as np
@@ -38,10 +39,11 @@ from .ranking import rank_watchlist
 from .universe import fetch_ticker_list
 
 BACKTEST_DIR = PROJECT_ROOT / "backtest"
-BACKTEST_PERIOD = "2y"
-TEST_WINDOW_DAYS = 120  # last ~6 months of trading days
+BACKTEST_PERIOD = "3y"
+TEST_WINDOW_DAYS = 250  # last ~12 months of trading days
 TOP_N = 20
 FORWARD_HORIZONS = [1, 3, 5, 10]
+WINSORIZE_LIMIT = 30  # cap returns at +/-30% to reduce outlier distortion
 
 # Factors saved per pick (for quintile analysis)
 _SAVED_FACTORS = [
@@ -203,7 +205,7 @@ def run_backtest():
     # ── 4. Analyse results ────────────────────────────────────────
     print()
     print("[3/4] Analyzing results...")
-    analysis = _analyze_results(daily_results)
+    analysis = _analyze_results(daily_results, price_data)
 
     # ── 5. Save ───────────────────────────────────────────────────
     print()
@@ -326,7 +328,15 @@ def _returns_for_horizon(picks: list[dict], horizon: int) -> list[float]:
     return [r for p in picks if (r := _get_return(p, horizon)) is not None]
 
 
-def _analyze_results(daily_results: list[dict]) -> dict:
+def _winsorize(returns: list[float], limit: float = WINSORIZE_LIMIT) -> list[float]:
+    """Clip returns to [-limit, +limit] to reduce outlier distortion."""
+    return [max(-limit, min(limit, r)) for r in returns]
+
+
+def _analyze_results(
+    daily_results: list[dict],
+    price_data: dict[str, pd.DataFrame] | None = None,
+) -> dict:
     """Compute summary statistics from backtest daily results."""
     picks = _all_picks(daily_results)
     if not picks:
@@ -339,6 +349,7 @@ def _analyze_results(daily_results: list[dict]) -> dict:
     for h in FORWARD_HORIZONS:
         rets = _returns_for_horizon(picks, h)
         if rets:
+            w_rets = _winsorize(rets)
             per_horizon[h] = {
                 "n": len(rets),
                 "win_rate": round(sum(1 for r in rets if r > 0) / len(rets) * 100, 1),
@@ -346,6 +357,8 @@ def _analyze_results(daily_results: list[dict]) -> dict:
                 "median_return": round(float(np.median(rets)), 2),
                 "best": round(max(rets), 2),
                 "worst": round(min(rets), 2),
+                "w_avg_return": round(float(np.mean(w_rets)), 2),
+                "w_median_return": round(float(np.median(w_rets)), 2),
             }
     analysis["per_horizon"] = per_horizon
 
@@ -356,6 +369,8 @@ def _analyze_results(daily_results: list[dict]) -> dict:
         t5 = _returns_for_horizon(top5, h)
         t20 = _returns_for_horizon(picks, h)
         if t5 and t20:
+            w_t5 = _winsorize(t5)
+            w_t20 = _winsorize(t20)
             rank_analysis[h] = {
                 "top5_avg": round(float(np.mean(t5)), 2),
                 "top20_avg": round(float(np.mean(t20)), 2),
@@ -365,6 +380,8 @@ def _analyze_results(daily_results: list[dict]) -> dict:
                 "top20_win_rate": round(
                     sum(1 for r in t20 if r > 0) / len(t20) * 100, 1
                 ),
+                "w_top5_avg": round(float(np.mean(w_t5)), 2),
+                "w_top20_avg": round(float(np.mean(w_t20)), 2),
             }
     analysis["rank_analysis"] = rank_analysis
 
@@ -393,6 +410,10 @@ def _analyze_results(daily_results: list[dict]) -> dict:
 
     # ── Factor quintile analysis ──────────────────────────────────
     analysis["factor_quintiles"] = _quintile_analysis(picks)
+
+    # ── SPY benchmark ────────────────────────────────────────────
+    if price_data and "SPY" in price_data:
+        analysis["spy_benchmark"] = _compute_spy_benchmark(daily_results, price_data)
 
     return analysis
 
@@ -435,9 +456,11 @@ def _quintile_analysis(picks: list[dict]) -> dict:
             lo = q * q_size
             hi = lo + q_size if q < 4 else n
             q_rets = [r for _, r in pairs[lo:hi]]
+            w_rets = _winsorize(q_rets)
             quintiles[f"Q{q + 1}"] = {
                 "n": len(q_rets),
-                "avg_return": round(float(np.mean(q_rets)), 2),
+                "avg_return": round(float(np.mean(w_rets)), 2),
+                "raw_avg": round(float(np.mean(q_rets)), 2),
                 "win_rate": round(
                     sum(1 for r in q_rets if r > 0) / len(q_rets) * 100, 1
                 ),
@@ -452,6 +475,45 @@ def _quintile_analysis(picks: list[dict]) -> dict:
         }
 
     return results
+
+
+def _compute_spy_benchmark(
+    daily_results: list[dict], price_data: dict[str, pd.DataFrame]
+) -> dict:
+    """Compute SPY returns over same horizons and excess returns vs picks."""
+    result: dict = {}
+    for h in FORWARD_HORIZONS:
+        spy_rets: list[float] = []
+        excess_rets: list[float] = []
+        for day in daily_results:
+            date = pd.Timestamp(day["date"])
+            spy_fwd = _forward_returns(price_data, "SPY", date)
+            spy_ret = spy_fwd.get(h)
+            if spy_ret is None:
+                continue
+            spy_rets.append(spy_ret)
+            for pick in day.get("picks", []):
+                pick_ret = _get_return(pick, h)
+                if pick_ret is not None:
+                    excess_rets.append(pick_ret - spy_ret)
+
+        if spy_rets and excess_rets:
+            w_excess = _winsorize(excess_rets)
+            result[h] = {
+                "spy_avg": round(float(np.mean(spy_rets)), 2),
+                "spy_median": round(float(np.median(spy_rets)), 2),
+                "excess_avg": round(float(np.mean(excess_rets)), 2),
+                "excess_median": round(float(np.median(excess_rets)), 2),
+                "w_excess_avg": round(float(np.mean(w_excess)), 2),
+                "w_excess_median": round(float(np.median(w_excess)), 2),
+                "excess_win_rate": round(
+                    sum(1 for r in excess_rets if r > 0)
+                    / len(excess_rets)
+                    * 100,
+                    1,
+                ),
+            }
+    return result
 
 
 # ── Terminal output ───────────────────────────────────────────────────────
@@ -469,17 +531,19 @@ def _print_summary(analysis: dict) -> None:
     if ph:
         print()
         print("  Overall Returns (Top 20 picks per day):")
-        print("  " + "-" * 48)
+        print("  " + "-" * 68)
         print(
             f"  {'Horizon':>8} {'N':>6} {'Win%':>7} {'Avg':>8} "
-            f"{'Median':>8} {'Best':>8} {'Worst':>8}"
+            f"{'W.Avg':>8} {'Median':>8} {'Best':>8} {'Worst':>8}"
         )
         for h in FORWARD_HORIZONS:
             s = ph.get(h) or ph.get(str(h))
             if s:
+                w_avg = s.get("w_avg_return", s["avg_return"])
                 print(
                     f"  {h:>5}d {s['n']:>6} {s['win_rate']:>6.1f}% "
-                    f"{s['avg_return']:>+7.2f}% {s['median_return']:>+7.2f}% "
+                    f"{s['avg_return']:>+7.2f}% {w_avg:>+7.2f}% "
+                    f"{s['median_return']:>+7.2f}% "
                     f"{s['best']:>+7.2f}% {s['worst']:>+7.2f}%"
                 )
 
@@ -488,17 +552,21 @@ def _print_summary(analysis: dict) -> None:
     if ra:
         print()
         print("  Top 5 vs Top 20:")
-        print("  " + "-" * 48)
+        print("  " + "-" * 68)
         print(
             f"  {'Horizon':>8} {'Top5 Avg':>10} {'Top20 Avg':>10} "
+            f"{'T5 W.Avg':>10} {'T20 W.Avg':>10} "
             f"{'Top5 Win%':>10} {'Top20 Win%':>11}"
         )
         for h in FORWARD_HORIZONS:
             s = ra.get(h) or ra.get(str(h))
             if s:
+                w_t5 = s.get("w_top5_avg", s["top5_avg"])
+                w_t20 = s.get("w_top20_avg", s["top20_avg"])
                 print(
                     f"  {h:>5}d {s['top5_avg']:>+9.2f}% "
                     f"{s['top20_avg']:>+9.2f}% "
+                    f"{w_t5:>+9.2f}% {w_t20:>+9.2f}% "
                     f"{s['top5_win_rate']:>9.1f}% "
                     f"{s['top20_win_rate']:>10.1f}%"
                 )
@@ -515,6 +583,28 @@ def _print_summary(analysis: dict) -> None:
                 print(
                     f"  {regime:>12}: avg {s['avg_return']:+.2f}%, "
                     f"win {s['win_rate']:.1f}% (n={s['n']})"
+                )
+
+    # SPY benchmark
+    spy = analysis.get("spy_benchmark", {})
+    if spy:
+        print()
+        print("  SPY Benchmark (picks vs SPY, same horizons):")
+        print("  " + "-" * 68)
+        print(
+            f"  {'Horizon':>8} {'SPY Avg':>9} {'Excess Avg':>11} "
+            f"{'W.Excess':>10} {'Excess Med':>11} {'Beat SPY%':>10}"
+        )
+        for h in FORWARD_HORIZONS:
+            s = spy.get(h) or spy.get(str(h))
+            if s:
+                w_exc = s.get("w_excess_avg", s["excess_avg"])
+                print(
+                    f"  {h:>5}d {s['spy_avg']:>+8.2f}% "
+                    f"{s['excess_avg']:>+10.2f}% "
+                    f"{w_exc:>+9.2f}% "
+                    f"{s['excess_median']:>+10.2f}% "
+                    f"{s['excess_win_rate']:>9.1f}%"
                 )
 
     # Factor quintiles
@@ -534,3 +624,255 @@ def _print_summary(analysis: dict) -> None:
                     f"-> Q5 {q5['avg_return']:+.2f}%  "
                     f"(spread {spread:+.2f}%)"
                 )
+
+
+# ── Multi-factor combination analysis (Phase 8) ─────────────────────────
+
+# Factor conditions for combination testing.
+# Each maps a readable name to a function(factors_dict) -> bool.
+_CONDITIONS = {
+    "tight_atr": lambda f: (f.get("atr_compression") or 999) <= 0.5,
+    "high_hh_hl": lambda f: (f.get("hh_hl_pct") or 0) >= 50,
+    "high_vol": lambda f: (f.get("vol_ratio_50d") or 0) >= 1.5,
+    "high_rs": lambda f: (f.get("rs_percentile") or 0) >= 70,
+    "flag_dryup": lambda f: f.get("flag_vol_label") in ("dry_up", "contracting"),
+    "has_pole": lambda f: f.get("has_pole") is True,
+    "strong_ema": lambda f: f.get("ema_stack") in ("full", "partial"),
+    "good_candle": lambda f: f.get("candle_label") in ("ideal", "ok"),
+    "weekly_conf": lambda f: f.get("weekly_confluence")
+    in ("max_confluence", "max_confirmation", "strong"),
+    "ath_level": lambda f: f.get("level_type") in ("ath", "multi_year"),
+    "not_fresh": lambda f: (f.get("freshness_score") or 0) <= 30,
+    "rs_up": lambda f: (f.get("rs_direction") or 0) >= 3,
+}
+
+MIN_COMBO_PICKS = 50  # minimum sample size for statistical relevance
+
+
+def run_combination_analysis():
+    """Analyze factor combinations from saved backtest results.
+
+    Phase 8 steps 44-45: tests all single/pair/trio factor combinations,
+    measures win rate and returns, and breaks down by market regime.
+    """
+    print()
+    print("  Multi-Factor Combination Analysis (Phase 8)")
+    print("  " + "=" * 50)
+
+    # ── Load saved results ────────────────────────────────────
+    results_path = BACKTEST_DIR / "results.json"
+    if not results_path.exists():
+        print("  ERROR: No backtest results found. Run --backtest first.")
+        return
+
+    with open(results_path) as f:
+        data = json.load(f)
+
+    daily_results = data["daily_results"]
+
+    # Flatten picks, attaching regime from the day level
+    picks: list[dict] = []
+    for day in daily_results:
+        regime = day.get("regime", "unknown")
+        for pick in day.get("picks", []):
+            picks.append({**pick, "regime": regime})
+
+    if not picks:
+        print("  ERROR: No picks found in results.")
+        return
+
+    print(f"\n  Analyzing {len(picks):,} picks across {len(daily_results)} days")
+
+    horizon = 5
+
+    # ── Baseline ──────────────────────────────────────────────
+    baseline = _combo_stats(picks, horizon)
+    print(
+        f"  Baseline: n={baseline['n']}, "
+        f"win {baseline['win_rate']:.1f}%, "
+        f"avg {baseline['avg']:+.2f}%, "
+        f"med {baseline['median']:+.2f}%"
+    )
+
+    # ── Precompute condition masks as index sets ──────────────
+    cond_names = sorted(_CONDITIONS.keys())
+    mask_sets: dict[str, set[int]] = {}
+    for name in cond_names:
+        mask_sets[name] = {
+            i
+            for i, p in enumerate(picks)
+            if _CONDITIONS[name](p.get("factors", {}))
+        }
+
+    # ── Test all singles, pairs, trios ────────────────────────
+    print("\n  Testing combinations...")
+    all_combos: list[dict] = []
+
+    for size in (1, 2, 3):
+        for combo in combinations(cond_names, size):
+            idx = mask_sets[combo[0]]
+            for c in combo[1:]:
+                idx = idx & mask_sets[c]
+            if len(idx) < MIN_COMBO_PICKS:
+                continue
+            matching = [picks[i] for i in idx]
+            stats = _combo_stats(matching, horizon)
+            all_combos.append({"combo": combo, **stats})
+
+    all_combos.sort(key=lambda r: r["win_rate"], reverse=True)
+
+    # ── Print singles ─────────────────────────────────────────
+    singles = [r for r in all_combos if len(r["combo"]) == 1]
+    print(f"\n  Single Factors ({len(singles)} with n>={MIN_COMBO_PICKS}):")
+    print("  " + "-" * 58)
+    print(f"  {'Factor':>18} {'N':>6} {'Win%':>7} {'Avg':>8} {'Median':>8}")
+    for r in singles:
+        print(
+            f"  {r['combo'][0]:>18} {r['n']:>6} "
+            f"{r['win_rate']:>6.1f}% {r['avg']:>+7.2f}% {r['median']:>+7.2f}%"
+        )
+
+    # ── Print top pairs ───────────────────────────────────────
+    pairs = [r for r in all_combos if len(r["combo"]) == 2]
+    print(f"\n  Top 25 Factor Pairs ({len(pairs)} tested):")
+    print("  " + "-" * 70)
+    print(f"  {'Combo':>35} {'N':>6} {'Win%':>7} {'Avg':>8} {'Median':>8}")
+    for r in pairs[:25]:
+        label = " + ".join(r["combo"])
+        print(
+            f"  {label:>35} {r['n']:>6} "
+            f"{r['win_rate']:>6.1f}% {r['avg']:>+7.2f}% {r['median']:>+7.2f}%"
+        )
+
+    # ── Print top trios ───────────────────────────────────────
+    trios = [r for r in all_combos if len(r["combo"]) == 3]
+    print(f"\n  Top 25 Factor Trios ({len(trios)} tested):")
+    print("  " + "-" * 80)
+    print(f"  {'Combo':>50} {'N':>6} {'Win%':>7} {'Avg':>8} {'Median':>8}")
+    for r in trios[:25]:
+        label = " + ".join(r["combo"])
+        print(
+            f"  {label:>50} {r['n']:>6} "
+            f"{r['win_rate']:>6.1f}% {r['avg']:>+7.2f}% {r['median']:>+7.2f}%"
+        )
+
+    # ── Regime breakdown for top 10 overall (Step 45) ─────────
+    print("\n  Regime Breakdown — Top 10 Combos:")
+    print("  " + "-" * 80)
+    for i, r in enumerate(all_combos[:10], 1):
+        label = " + ".join(r["combo"])
+        print(
+            f"\n  #{i}: {label}  "
+            f"(n={r['n']}, win {r['win_rate']:.1f}%, "
+            f"avg {r['avg']:+.2f}%, med {r['median']:+.2f}%)"
+        )
+        idx = mask_sets[r["combo"][0]]
+        for c in r["combo"][1:]:
+            idx = idx & mask_sets[c]
+        matching = [picks[j] for j in idx]
+        regime_stats = _combo_regime_stats(matching, horizon)
+        for regime in sorted(regime_stats):
+            rs = regime_stats[regime]
+            print(
+                f"      {regime:>12}: n={rs['n']:>4}, "
+                f"win {rs['win_rate']:>5.1f}%, avg {rs['avg']:+.2f}%"
+            )
+
+    # ── Best combo per regime (Step 45) ───────────────────────
+    regimes = sorted({p["regime"] for p in picks if p.get("picks") is not None or True})
+    regime_picks: dict[str, list[int]] = {}
+    for i, p in enumerate(picks):
+        regime_picks.setdefault(p["regime"], []).append(i)
+
+    print("\n  Best Combo per Regime:")
+    print("  " + "-" * 80)
+    for regime in sorted(regime_picks):
+        if regime in ("risk_off", "insufficient_data"):
+            continue
+        r_indices = set(regime_picks[regime])
+        if len(r_indices) < MIN_COMBO_PICKS:
+            continue
+
+        best: dict | None = None
+        for size in (1, 2, 3):
+            for combo in combinations(cond_names, size):
+                idx = r_indices & mask_sets[combo[0]]
+                for c in combo[1:]:
+                    idx = idx & mask_sets[c]
+                if len(idx) < 30:
+                    continue
+                matching = [picks[j] for j in idx]
+                stats = _combo_stats(matching, horizon)
+                if best is None or stats["win_rate"] > best["win_rate"]:
+                    best = {"combo": combo, **stats}
+
+        if best:
+            label = " + ".join(best["combo"])
+            total = len(r_indices)
+            print(
+                f"  {regime:>12}: {label:>40}  "
+                f"n={best['n']}/{total}, "
+                f"win {best['win_rate']:.1f}%, "
+                f"avg {best['avg']:+.2f}%"
+            )
+
+    # ── Save results ──────────────────────────────────────────
+    save_path = PROJECT_ROOT / "test_results" / "phase8_combinations.json"
+    save_data = {
+        "baseline": baseline,
+        "conditions_tested": cond_names,
+        "min_picks": MIN_COMBO_PICKS,
+        "horizon": horizon,
+        "singles": [
+            {"combo": list(r["combo"]), **{k: v for k, v in r.items() if k != "combo"}}
+            for r in singles
+        ],
+        "top_pairs": [
+            {"combo": list(r["combo"]), **{k: v for k, v in r.items() if k != "combo"}}
+            for r in pairs[:30]
+        ],
+        "top_trios": [
+            {"combo": list(r["combo"]), **{k: v for k, v in r.items() if k != "combo"}}
+            for r in trios[:30]
+        ],
+    }
+    with open(save_path, "w") as f:
+        json.dump(save_data, f, indent=2)
+
+    print(f"\n  Results saved to {save_path}")
+    print()
+
+
+def _combo_stats(picks: list[dict], horizon: int) -> dict:
+    """Compute win rate, avg, and median for a filtered set of picks."""
+    rets = _returns_for_horizon(picks, horizon)
+    if not rets:
+        return {"n": 0, "win_rate": 0.0, "avg": 0.0, "median": 0.0}
+    w_rets = _winsorize(rets)
+    return {
+        "n": len(rets),
+        "win_rate": round(sum(1 for r in rets if r > 0) / len(rets) * 100, 1),
+        "avg": round(float(np.mean(w_rets)), 2),
+        "median": round(float(np.median(rets)), 2),
+    }
+
+
+def _combo_regime_stats(picks: list[dict], horizon: int) -> dict[str, dict]:
+    """Break down combo stats by market regime."""
+    by_regime: dict[str, list[dict]] = {}
+    for p in picks:
+        by_regime.setdefault(p.get("regime", "unknown"), []).append(p)
+
+    result: dict[str, dict] = {}
+    for regime, rpicks in by_regime.items():
+        rets = _returns_for_horizon(rpicks, horizon)
+        if rets:
+            w_rets = _winsorize(rets)
+            result[regime] = {
+                "n": len(rets),
+                "win_rate": round(
+                    sum(1 for r in rets if r > 0) / len(rets) * 100, 1
+                ),
+                "avg": round(float(np.mean(w_rets)), 2),
+            }
+    return result
