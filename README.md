@@ -55,7 +55,7 @@ The problem is finding them. You'd have to look at thousands of charts every mor
 - It's a full data pipeline project (API ingestion → computation → visualization)
 - Demonstrates pandas, matplotlib, yfinance, Jinja2 templating, caching, threading
 
-**What it does NOT do:** It does not tell you to buy or sell. It does not place trades. It does not guarantee profits. It organizes data so a human can make faster, more informed decisions.
+**What it does NOT do:** It does not guarantee profits. The scanner identifies setups with a statistically validated edge, but trading involves risk. An autonomous trading mode (paper account) is in development to validate real-world execution.
 
 ## Features
 
@@ -230,9 +230,11 @@ The ranking applies these rules in order:
 5. **ABR distance to level** (quaternary) — closer to breakout level = higher rank.
 6. **Penalties** — post-catalyst cooldown (fresh catalyst + loose ATR = penalty) and extension penalty (>2 ABR above breakout level).
 
-### What's next: AI-enhanced analysis
+### What's next: AI analysis + autonomous trading
 
-The scanner has exhausted improvements from free yfinance data. The next phase integrates AI analysis using Claude to review each top stock's chart and factor profile, identifying patterns and red flags that numerical factors miss (e.g., distribution patterns that score well on ATR compression, descending triangles near ATH). This acts as a quality filter between the scanner and the trader.
+**Phase 9 (in progress):** AI-enhanced analysis using Claude to review each top stock's chart and factor profile. Identifies patterns and red flags that numerical factors miss (distribution patterns that score well on ATR compression, descending triangles near ATH). Acts as a quality filter between the scanner and trade execution.
+
+**Phase 10 (planned):** Fully autonomous trading bot using Alpaca's paper trading API. The complete pipeline: scan → AI analysis → trade execution → result tracking → self-improvement. Every trade generates real data (fills, slippage, timing) that feeds back into the system. Paper account only until provably profitable over 100+ trades with consistent win rate across market regimes.
 
 Full quintile breakdowns and methodology details are in [`test_results/`](test_results/).
 
