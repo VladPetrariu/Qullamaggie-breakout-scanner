@@ -72,7 +72,7 @@ The problem is finding them. You'd have to look at thousands of charts every mor
 | **Breakout Level** | ATH > multi-year > 52-week > prior resistance classification |
 | **Weekly Confluence** | Daily + weekly coiling/breakout simultaneously |
 
-- **Evidence-based ranking** — ATR compression (tightest bases first) → factor quality count → ABR distance to level
+- **Evidence-based ranking** — quality count (multi-factor combos) → HH/HL price structure → ATR compression → ABR distance to level
 - **Dark-mode dashboard** — filterable by sector, EMA stack, catalyst status, breakout level
 - **Clickable tickers** — each stock links directly to its TradingView chart
 - **Historical comparison** — NEW badges and rank change arrows vs prior day's scan
@@ -101,6 +101,7 @@ The dashboard opens automatically at `scans/scan_YYYY-MM-DD.html`.
 ```bash
 python -m scanner --watch      # Intraday monitor — polls prices, macOS alerts on breakout
 python -m scanner --backtest   # Walk-forward backtest — validates rankings against historical data
+python -m scanner --analyze    # Multi-factor combination analysis on saved backtest results
 ```
 
 ## Dashboard
@@ -189,46 +190,49 @@ Everything is free — no API keys, no subscriptions:
 
 The scanner includes a walk-forward backtesting engine (`--backtest` mode) that validates whether the ranking system actually predicts positive forward returns. For each trading day in the test period, it computes what the scanner *would have output* using only data available up to that day (no lookahead), then measures what happened next.
 
-### Latest results (Oct 2025 -- Mar 2026, 120 trading days)
+### Latest results (Mar 2025 -- Mar 2026, 250 trading days)
 
-**Current ranking performance (top 20 picks per day, 2,400 total picks):**
+**Current ranking performance (top 20 picks per day, 4,840 total picks):**
 
-| Horizon | Win Rate | Avg Return | Median Return |
-|---------|----------|------------|---------------|
-| 1 day | 46.2% | -0.11% | +0.00% |
-| 3 day | 49.1% | -0.42% | +0.00% |
-| 5 day | **51.4%** | -0.30% | **+0.05%** |
-| 10 day | **53.0%** | -0.48% | **+0.14%** |
+| Horizon | Win Rate | W. Avg Return | Median Return |
+|---------|----------|---------------|---------------|
+| 1 day | 50.6% | +0.12% | +0.04% |
+| 3 day | 51.2% | +0.17% | +0.09% |
+| 5 day | **52.4%** | **+0.33%** | **+0.21%** |
+| 10 day | **56.1%** | **+0.95%** | **+0.80%** |
 
-Win rate is above 50% and median return is positive at 5-day and 10-day horizons. Average returns are still slightly negative, pulled down by outlier losses (corporate events, delistings) that would be addressed by winsorization.
+Win rate above 50% at all horizons. Median and winsorized average returns positive across the board. The 5-day win rate of 52.4% over 4,840 picks has a z-score of 3.34 (p < 0.001) — statistically significant. The 10-day results are the strongest: **56.1% win rate with +0.80% median return**.
+
+Top 5 ranked stocks outperform top 20 (10d winsorized avg: +1.15% vs +0.95%), confirming the ranking correctly identifies the best setups.
 
 ### How we got here: iterative backtesting
 
-The ranking system was overhauled through three iterations, each validated by the walk-forward backtest:
+The ranking system was overhauled through five iterations, each validated by walk-forward backtest:
 
-| Version | What changed | 5d Win Rate | 5d Median |
-|---------|-------------|-------------|-----------|
-| v1 — Catalyst freshness first | Original ranking | 45.9% | -0.64% |
-| v2 — ATR compression first (no gate) | Promoted tightest ATR stocks | 41.4% | -0.27% |
-| v3 — ATR compression + quality gate | Required uptrend + RS + volume | **51.4%** | **+0.05%** |
+| Version | What changed | Period | 5d Win% | 5d Median | 10d Win% |
+|---------|-------------|--------|---------|-----------|----------|
+| v1 — Freshness-first | Original ranking | 6mo | 45.9% | -0.64% | -- |
+| v2 — ATR-first (no gate) | Tightest ATR stocks first | 6mo | 41.4% | -0.27% | -- |
+| v3 — ATR + quality gate | Required uptrend + RS + volume | 6mo | 51.4% | +0.05% | 53.0% |
+| v4 — Phase 7 refinements | ATR floor, HH/HL double-weighted | 6mo | 51.2% | +0.05% | 52.9% |
+| **v5 — Quality-first** | **Quality count primary, HH/HL secondary** | **12mo** | **52.4%** | **+0.21%** | **56.1%** |
 
-**v1** revealed that catalyst freshness was anti-predictive (-4.84% quintile spread) while ATR compression was the strongest signal (+3.05%). **v2** naively made ATR compression the primary key, but this selected dead/illiquid stocks with zero volatility — 59% of picks had no uptrend. **v3** added a quality gate requiring stocks to have an uptrend (EMA stack), relative strength (RS >= 20), and actual trading volume before ATR compression takes effect.
+**v1** revealed that catalyst freshness was anti-predictive. **v3** added a quality gate that flipped the scanner from harmful to useful. **v5** used multi-factor combination analysis (Phase 8) to discover that every top-performing factor combo includes HH/HL price structure, and ATR compression alone barely beats baseline — leading to the quality-first sort that produced the best results.
 
 ### Current ranking system
 
 The ranking applies these rules in order:
 
 1. **Quality gate** — stock must have EMA stack (full/partial/weak), RS percentile >= 20, and volume ratio >= 0.1. Stocks failing any criteria sort last.
-2. **ATR compression** (primary sort key) — tighter consolidation = higher rank. Strongest backtest predictor.
-3. **Factor quality count** (secondary) — how many factors are in their "strong" range (10 factors checked). Anti-predictive factors removed.
-4. **ABR distance to level** (tertiary) — closer to breakout level = higher rank.
-5. **Penalties** — post-catalyst cooldown (fresh catalyst + loose ATR = penalty) and extension penalty (>2 ABR above breakout level).
+2. **Factor quality count** (primary sort key) — how many factors are in their "strong" range (12 factors checked, HH/HL double-weighted). Multi-factor combos drive win rates.
+3. **HH/HL price structure** (secondary) — higher percentage of higher-highs/higher-lows = higher rank. Strongest single predictor in combo analysis.
+4. **ATR compression** (tertiary) — tighter consolidation = higher rank, floored at 0.3 to prevent stagnant stocks ranking first.
+5. **ABR distance to level** (quaternary) — closer to breakout level = higher rank.
+6. **Penalties** — post-catalyst cooldown (fresh catalyst + loose ATR = penalty) and extension penalty (>2 ABR above breakout level).
 
-### Remaining improvements
+### What's next: AI-enhanced analysis
 
-1. **Winsorize extreme returns** — cap outliers at +/-30% to exclude corporate events that distort averages
-2. **SPY benchmark comparison** — measure whether picks outperform simply buying the index
-3. **External data integration** — news sentiment APIs, earnings surprise data, and fresh short interest to improve catalyst quality classification
+The scanner has exhausted improvements from free yfinance data. The next phase integrates AI analysis using Claude to review each top stock's chart and factor profile, identifying patterns and red flags that numerical factors miss (e.g., distribution patterns that score well on ATR compression, descending triangles near ATH). This acts as a quality filter between the scanner and the trader.
 
 Full quintile breakdowns and methodology details are in [`test_results/`](test_results/).
 
@@ -236,7 +240,7 @@ Full quintile breakdowns and methodology details are in [`test_results/`](test_r
 
 - **End-of-day data only** — yfinance provides daily bars, not intraday. Use this for pre-market watchlist building, not live entries
 - **Catalyst detection is approximate** — volume spikes are a proxy for actual news events (earnings, FDA, contracts)
-- **Ranking has modest edge** — backtesting shows 51% win rate and positive median returns, but average returns still slightly negative due to outlier losses
+- **Ranking has modest edge** — backtesting shows 52.4% win rate and positive median returns at all horizons, strongest at 10 days (56.1%)
 - **yfinance rate limits** — first run downloads ~7,000 tickers; occasional throttling is normal
 
 ## Background
