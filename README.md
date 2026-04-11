@@ -72,7 +72,7 @@ The problem is finding them. You'd have to look at thousands of charts every mor
 | **Breakout Level** | ATH > multi-year > 52-week > prior resistance classification |
 | **Weekly Confluence** | Daily + weekly coiling/breakout simultaneously |
 
-- **3-tier ranking** — catalyst freshness → factor quality count → ABR distance to level
+- **Evidence-based ranking** — ATR compression (tightest bases first) → factor quality count → ABR distance to level
 - **Dark-mode dashboard** — filterable by sector, EMA stack, catalyst status, breakout level
 - **Clickable tickers** — each stock links directly to its TradingView chart
 - **Historical comparison** — NEW badges and rank change arrows vs prior day's scan
@@ -95,6 +95,13 @@ python -m scanner
 | Cached run | ~12 sec | Uses local parquet cache, refreshes every 16 hours |
 
 The dashboard opens automatically at `scans/scan_YYYY-MM-DD.html`.
+
+### Other modes
+
+```bash
+python -m scanner --watch      # Intraday monitor — polls prices, macOS alerts on breakout
+python -m scanner --backtest   # Walk-forward backtest — validates rankings against historical data
+```
 
 ## Dashboard
 
@@ -138,7 +145,7 @@ scanner/
 ├── universe.py              # SEC EDGAR ticker fetch + price/volume filter
 ├── data.py                  # yfinance batch downloader (500/chunk)
 ├── profile.py               # Float, short interest, sector (threaded)
-├── ranking.py               # 3-tier watchlist sort
+├── ranking.py               # Evidence-based watchlist sort
 ├── dashboard.py             # Jinja2 HTML generation + historical comparison
 └── factors/
     ├── market_context.py    # 5 breadth indicators → regime classification
@@ -178,11 +185,58 @@ Everything is free — no API keys, no subscriptions:
 - ~200MB disk space for cached data
 - Internet connection (for data download only — dashboard works offline)
 
+## Backtesting & Results
+
+The scanner includes a walk-forward backtesting engine (`--backtest` mode) that validates whether the ranking system actually predicts positive forward returns. For each trading day in the test period, it computes what the scanner *would have output* using only data available up to that day (no lookahead), then measures what happened next.
+
+### Latest results (Oct 2025 -- Mar 2026, 120 trading days)
+
+**Current ranking performance (top 20 picks per day, 2,400 total picks):**
+
+| Horizon | Win Rate | Avg Return | Median Return |
+|---------|----------|------------|---------------|
+| 1 day | 46.2% | -0.11% | +0.00% |
+| 3 day | 49.1% | -0.42% | +0.00% |
+| 5 day | **51.4%** | -0.30% | **+0.05%** |
+| 10 day | **53.0%** | -0.48% | **+0.14%** |
+
+Win rate is above 50% and median return is positive at 5-day and 10-day horizons. Average returns are still slightly negative, pulled down by outlier losses (corporate events, delistings) that would be addressed by winsorization.
+
+### How we got here: iterative backtesting
+
+The ranking system was overhauled through three iterations, each validated by the walk-forward backtest:
+
+| Version | What changed | 5d Win Rate | 5d Median |
+|---------|-------------|-------------|-----------|
+| v1 — Catalyst freshness first | Original ranking | 45.9% | -0.64% |
+| v2 — ATR compression first (no gate) | Promoted tightest ATR stocks | 41.4% | -0.27% |
+| v3 — ATR compression + quality gate | Required uptrend + RS + volume | **51.4%** | **+0.05%** |
+
+**v1** revealed that catalyst freshness was anti-predictive (-4.84% quintile spread) while ATR compression was the strongest signal (+3.05%). **v2** naively made ATR compression the primary key, but this selected dead/illiquid stocks with zero volatility — 59% of picks had no uptrend. **v3** added a quality gate requiring stocks to have an uptrend (EMA stack), relative strength (RS >= 20), and actual trading volume before ATR compression takes effect.
+
+### Current ranking system
+
+The ranking applies these rules in order:
+
+1. **Quality gate** — stock must have EMA stack (full/partial/weak), RS percentile >= 20, and volume ratio >= 0.1. Stocks failing any criteria sort last.
+2. **ATR compression** (primary sort key) — tighter consolidation = higher rank. Strongest backtest predictor.
+3. **Factor quality count** (secondary) — how many factors are in their "strong" range (10 factors checked). Anti-predictive factors removed.
+4. **ABR distance to level** (tertiary) — closer to breakout level = higher rank.
+5. **Penalties** — post-catalyst cooldown (fresh catalyst + loose ATR = penalty) and extension penalty (>2 ABR above breakout level).
+
+### Remaining improvements
+
+1. **Winsorize extreme returns** — cap outliers at +/-30% to exclude corporate events that distort averages
+2. **SPY benchmark comparison** — measure whether picks outperform simply buying the index
+3. **External data integration** — news sentiment APIs, earnings surprise data, and fresh short interest to improve catalyst quality classification
+
+Full quintile breakdowns and methodology details are in [`test_results/`](test_results/).
+
 ## Limitations
 
 - **End-of-day data only** — yfinance provides daily bars, not intraday. Use this for pre-market watchlist building, not live entries
 - **Catalyst detection is approximate** — volume spikes are a proxy for actual news events (earnings, FDA, contracts)
-- **No backtesting** — this is a scanner, not a trading system
+- **Ranking has modest edge** — backtesting shows 51% win rate and positive median returns, but average returns still slightly negative due to outlier losses
 - **yfinance rate limits** — first run downloads ~7,000 tickers; occasional throttling is normal
 
 ## Background

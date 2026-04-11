@@ -263,19 +263,20 @@ body {
     </ul>
 
     <h3>Ranking</h3>
-    <p>Stocks are sorted by a 3-tier system:</p>
+    <p>Stocks are sorted by an evidence-based system (validated by walk-forward backtesting):</p>
     <ul>
-      <li><span class="term">Primary</span> — Catalyst freshness score (freshest catalysts first)</li>
+      <li><span class="term">Primary</span> — ATR compression (tightest consolidation first — strongest backtest predictor)</li>
       <li><span class="term">Secondary</span> — Factor quality count (how many factors are in their "strong" range)</li>
       <li><span class="term">Tertiary</span> — ABR distance to breakout level (closer to level = higher)</li>
     </ul>
+    <p>Penalties are applied for: stocks with fresh catalysts that haven't consolidated yet, and stocks extended &gt;2 ABR above their breakout level.</p>
 
     <h3>Filters &amp; Controls</h3>
     <ul>
       <li><span class="term">EMA stack filter</span> — "Full stack only" is the default, showing only stocks in the strongest uptrend configuration</li>
       <li><span class="term">Catalyst filter</span> — "With catalyst" shows only stocks with a recent volume spike. "Fresh catalyst" limits to early/active freshness.</li>
       <li><span class="term">Level filter</span> — Filter to ATH-only, or include multi-year and 52-week highs</li>
-      <li><span class="term">Sort</span> — "Rank" uses the 3-tier sort. Other options sort by a single factor.</li>
+      <li><span class="term">Sort</span> — "Rank" uses the evidence-based sort. Other options sort by a single factor.</li>
       <li><span class="term">Keyboard</span> — Press <code>/</code> to focus the search bar</li>
     </ul>
 
