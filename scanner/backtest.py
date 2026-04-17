@@ -39,11 +39,13 @@ from .ranking import rank_watchlist
 from .universe import fetch_ticker_list
 
 BACKTEST_DIR = PROJECT_ROOT / "backtest"
+TEST_RESULTS_DIR = PROJECT_ROOT / "test_results"
 BACKTEST_PERIOD = "3y"
 TEST_WINDOW_DAYS = 250  # last ~12 months of trading days
 TOP_N = 20
 FORWARD_HORIZONS = [1, 3, 5, 10]
 WINSORIZE_LIMIT = 30  # cap returns at +/-30% to reduce outlier distortion
+MULTI_WINDOW_DAYS = 125  # ~6 months per window
 
 # Factors saved per pick (for quintile analysis)
 _SAVED_FACTORS = [
@@ -62,6 +64,27 @@ _SAVED_FACTORS = [
 ]
 
 
+# ── Shared data loading ───────────────────────────────────────────────────
+
+
+def _load_backtest_data() -> tuple[list[str], dict[str, pd.DataFrame]] | None:
+    """Download price data for backtesting. Returns (raw_tickers, price_data)."""
+    cache = Cache(CACHE_DIR)
+    BACKTEST_DIR.mkdir(parents=True, exist_ok=True)
+
+    print("[1/4] Downloading 3 years of price data...")
+    raw_tickers = fetch_ticker_list(cache)
+    price_data = download_prices(raw_tickers, cache, period=BACKTEST_PERIOD)
+    print(f"  Received data for {len(price_data):,} tickers")
+
+    spy = price_data.get("SPY")
+    if spy is None or len(spy) < 200:
+        print("  ERROR: Not enough SPY data for backtest")
+        return None
+
+    return raw_tickers, price_data
+
+
 # ── Public entry point ────────────────────────────────────────────────────
 
 
@@ -73,21 +96,13 @@ def run_backtest():
     print("  " + "=" * 45)
     print()
 
-    cache = Cache(CACHE_DIR)
-    BACKTEST_DIR.mkdir(parents=True, exist_ok=True)
-
-    # ── 1. Download 2 years of data ───────────────────────────────
-    print("[1/4] Downloading 2 years of price data...")
-    raw_tickers = fetch_ticker_list(cache)
-    price_data = download_prices(raw_tickers, cache, period=BACKTEST_PERIOD)
-    print(f"  Received data for {len(price_data):,} tickers")
+    result = _load_backtest_data()
+    if result is None:
+        return
+    raw_tickers, price_data = result
 
     # ── 2. Determine test window ──────────────────────────────────
-    spy = price_data.get("SPY")
-    if spy is None or len(spy) < TEST_WINDOW_DAYS + 50:
-        print("  ERROR: Not enough SPY data for backtest")
-        return
-
+    spy = price_data["SPY"]
     all_dates = spy.index
     max_fwd = max(FORWARD_HORIZONS)
     # Reserve max_fwd days at the end for forward return measurement
@@ -99,108 +114,9 @@ def run_backtest():
     )
 
     # ── 3. Walk-forward simulation ────────────────────────────────
-    print()
-    print("[2/4] Walk-forward simulation...")
-
-    daily_results: list[dict] = []
-    checkpoint_path = BACKTEST_DIR / "checkpoint.json"
-
-    # Resume from checkpoint if available
-    completed_dates: set[str] = set()
-    if checkpoint_path.exists():
-        try:
-            with open(checkpoint_path) as f:
-                saved = json.load(f)
-            daily_results = saved.get("daily_results", [])
-            completed_dates = {r["date"] for r in daily_results}
-            print(f"  Resuming from checkpoint ({len(completed_dates)} days done)")
-        except (json.JSONDecodeError, KeyError):
-            pass
-
-    for i, date in enumerate(tqdm(test_dates, desc="  Backtesting", unit="day")):
-        date_str = date.strftime("%Y-%m-%d")
-        if date_str in completed_dates:
-            continue
-
-        # Slice all price data up to this date (no lookahead)
-        sliced = _slice_data(price_data, date)
-
-        # Filter universe using sliced data
-        universe = _filter_universe_at(raw_tickers, sliced)
-        if len(universe) < 50:
-            daily_results.append(
-                {"date": date_str, "regime": "insufficient_data", "picks": []}
-            )
-            continue
-
-        # Market context
-        ctx = compute_market_context(sliced, universe)
-        regime = ctx["regime"]
-
-        if regime == "risk_off":
-            daily_results.append(
-                {"date": date_str, "regime": "risk_off", "picks": []}
-            )
-            continue
-
-        # Relative strength (universe-wide)
-        rs_data = compute_universe_rs(sliced, universe)
-
-        # Per-stock factors
-        watchlist: list[dict] = []
-        for ticker in universe:
-            df = sliced.get(ticker)
-            if df is None:
-                continue
-
-            consol = compute_consolidation(ticker, df)
-            if consol is None:
-                continue
-
-            rs = rs_data.get(ticker)
-            if rs is None:
-                continue
-
-            abr = compute_abr(df)
-            cat = compute_catalyst(ticker, df) or {}
-            vol = compute_volume(ticker, df) or {}
-            bl = compute_breakout_level(ticker, df) or {}
-            wk = compute_weekly(ticker, df) or {}
-
-            watchlist.append(
-                {"ticker": ticker, "abr": abr, **rs, **consol, **cat, **vol, **bl, **wk}
-            )
-
-        # Rank and take top N
-        watchlist = rank_watchlist(watchlist)
-        top = watchlist[:TOP_N]
-
-        # Record picks with forward returns
-        picks = []
-        for rank, stock in enumerate(top, 1):
-            fwd = _forward_returns(price_data, stock["ticker"], date)
-            picks.append(
-                {
-                    "ticker": stock["ticker"],
-                    "rank": rank,
-                    "factors": {k: stock.get(k) for k in _SAVED_FACTORS},
-                    "forward_returns": fwd,
-                }
-            )
-
-        daily_results.append(
-            {
-                "date": date_str,
-                "regime": regime,
-                "universe_size": len(universe),
-                "watchlist_size": len(watchlist),
-                "picks": picks,
-            }
-        )
-
-        # Checkpoint every 10 days
-        if (i + 1) % 10 == 0:
-            _save_checkpoint(checkpoint_path, daily_results)
+    daily_results = _run_simulation(
+        raw_tickers, price_data, test_dates, label="Backtesting", use_checkpoint=True
+    )
 
     # ── 4. Analyse results ────────────────────────────────────────
     print()
@@ -224,8 +140,6 @@ def run_backtest():
     with open(results_path, "w") as f:
         json.dump(results, f, indent=2, default=str)
 
-    checkpoint_path.unlink(missing_ok=True)
-
     _print_summary(analysis)
 
     elapsed = time.time() - start
@@ -233,6 +147,376 @@ def run_backtest():
     print(f"  Done in {elapsed:.1f}s")
     print(f"  Results saved to {results_path}")
     print()
+
+
+def run_multi_window_backtest():
+    """Run backtest across 6 non-overlapping ~6-month windows covering 3 years.
+
+    Downloads data once, then runs walk-forward simulation for each window.
+    Saves per-window results and a cross-window comparison summary.
+    """
+    start = time.time()
+    print()
+    print("  Qullamaggie Breakout Scanner — Multi-Window Backtest")
+    print("  " + "=" * 55)
+    print()
+
+    result = _load_backtest_data()
+    if result is None:
+        return
+    raw_tickers, price_data = result
+
+    spy = price_data["SPY"]
+    all_dates = spy.index
+    max_fwd = max(FORWARD_HORIZONS)
+
+    # Need buffer: 50 days lookback at start, max_fwd days at end
+    lookback_buffer = 50
+    usable_start = lookback_buffer
+    usable_end = len(all_dates) - max_fwd
+    usable_dates = all_dates[usable_start:usable_end]
+
+    # Split into 6 non-overlapping windows
+    n_windows = 6
+    window_size = len(usable_dates) // n_windows
+    windows: list[tuple[str, pd.DatetimeIndex]] = []
+
+    for i in range(n_windows):
+        w_start = i * window_size
+        w_end = (i + 1) * window_size if i < n_windows - 1 else len(usable_dates)
+        w_dates = usable_dates[w_start:w_end]
+        label = (
+            f"{w_dates[0].strftime('%b %Y')} — {w_dates[-1].strftime('%b %Y')}"
+        )
+        windows.append((label, w_dates))
+
+    print(f"  {len(usable_dates)} usable trading days split into {n_windows} windows:")
+    for i, (label, w_dates) in enumerate(windows, 1):
+        print(f"    Window {i}: {label} ({len(w_dates)} days)")
+    print()
+
+    # Run each window
+    TEST_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    window_summaries: list[dict] = []
+
+    for i, (label, w_dates) in enumerate(windows, 1):
+        print()
+        print(f"  {'=' * 55}")
+        print(f"  Window {i}/{n_windows}: {label}")
+        print(f"  {'=' * 55}")
+
+        daily_results = _run_simulation(
+            raw_tickers, price_data, w_dates, label=f"Window {i}"
+        )
+
+        analysis = _analyze_results(daily_results, price_data)
+
+        # Save per-window results
+        window_path = BACKTEST_DIR / f"multi_window_{i}.json"
+        window_data = {
+            "window": i,
+            "label": label,
+            "test_period": {
+                "start": w_dates[0].strftime("%Y-%m-%d"),
+                "end": w_dates[-1].strftime("%Y-%m-%d"),
+                "trading_days": len(w_dates),
+            },
+            "daily_results": daily_results,
+            "analysis": analysis,
+        }
+        with open(window_path, "w") as f:
+            json.dump(window_data, f, indent=2, default=str)
+
+        window_summaries.append({
+            "window": i,
+            "label": label,
+            "days": len(w_dates),
+            "analysis": analysis,
+        })
+
+        _print_summary(analysis)
+
+    # Cross-window comparison
+    _print_multi_window_comparison(window_summaries)
+
+    # Save combined summary as markdown
+    md_path = _save_multi_window_markdown(window_summaries)
+
+    elapsed = time.time() - start
+    print()
+    print(f"  Done in {elapsed:.1f}s")
+    print(f"  Summary saved to {md_path}")
+    print()
+
+
+def _print_multi_window_comparison(summaries: list[dict]) -> None:
+    """Print cross-window comparison table."""
+    print()
+    print()
+    print("  " + "=" * 70)
+    print("  CROSS-WINDOW COMPARISON")
+    print("  " + "=" * 70)
+
+    # Per-horizon comparison
+    for h in FORWARD_HORIZONS:
+        print()
+        print(f"  {h}-Day Returns:")
+        print("  " + "-" * 70)
+        print(
+            f"  {'Window':>30} {'Days':>5} {'N':>6} {'Win%':>7} "
+            f"{'W.Avg':>8} {'Median':>8}"
+        )
+
+        all_win_rates = []
+        all_w_avgs = []
+        all_medians = []
+
+        for s in summaries:
+            ph = s["analysis"].get("per_horizon", {})
+            stats = ph.get(h) or ph.get(str(h))
+            if stats:
+                w_avg = stats.get("w_avg_return", stats["avg_return"])
+                print(
+                    f"  {s['label']:>30} {s['days']:>5} {stats['n']:>6} "
+                    f"{stats['win_rate']:>6.1f}% {w_avg:>+7.2f}% "
+                    f"{stats['median_return']:>+7.2f}%"
+                )
+                all_win_rates.append(stats["win_rate"])
+                all_w_avgs.append(w_avg)
+                all_medians.append(stats["median_return"])
+
+        if all_win_rates:
+            avg_wr = np.mean(all_win_rates)
+            std_wr = np.std(all_win_rates)
+            avg_wa = np.mean(all_w_avgs)
+            avg_med = np.mean(all_medians)
+            print(f"  {'':>30} {'':>5} {'':>6} {'─' * 28}")
+            print(
+                f"  {'Average':>30} {'':>5} {'':>6} "
+                f"{avg_wr:>6.1f}% {avg_wa:>+7.2f}% {avg_med:>+7.2f}%"
+            )
+            print(
+                f"  {'Std Dev':>30} {'':>5} {'':>6} "
+                f"{std_wr:>6.1f}%"
+            )
+
+    # Regime breakdown per window
+    print()
+    print("  Regime Distribution:")
+    print("  " + "-" * 70)
+    print(f"  {'Window':>30} {'Favorable':>12} {'Mixed':>12} {'Caution':>12}")
+    for s in summaries:
+        br = s["analysis"].get("by_regime", {})
+        fav = br.get("favorable", {}).get(5) or br.get("favorable", {}).get("5", {})
+        mix = br.get("mixed", {}).get(5) or br.get("mixed", {}).get("5", {})
+        cau = br.get("caution", {}).get(5) or br.get("caution", {}).get("5", {})
+        fav_n = fav.get("n", 0) if fav else 0
+        mix_n = mix.get("n", 0) if mix else 0
+        cau_n = cau.get("n", 0) if cau else 0
+        print(
+            f"  {s['label']:>30} {fav_n:>12} {mix_n:>12} {cau_n:>12}"
+        )
+
+
+def _save_multi_window_markdown(summaries: list[dict]) -> Path:
+    """Save cross-window comparison as markdown in test_results/."""
+    from datetime import date as dt_date
+
+    lines: list[str] = []
+    today = dt_date.today().isoformat()
+    lines.append(
+        f"# Multi-Window Backtest Results — {today} (v5 quality-first ranking)"
+    )
+    lines.append("")
+    lines.append(
+        f"6 non-overlapping windows covering ~3 years of data. "
+        f"Ranking: quality count → HH/HL → ATR → ABR distance."
+    )
+    lines.append("")
+
+    # Summary table per horizon
+    for h in FORWARD_HORIZONS:
+        lines.append(f"## {h}-Day Forward Returns")
+        lines.append("")
+        lines.append(
+            "| Window | Days | N | Win Rate | W.Avg | Median |"
+        )
+        lines.append("|--------|------|---|----------|-------|--------|")
+
+        all_wr: list[float] = []
+        all_wa: list[float] = []
+        all_med: list[float] = []
+
+        for s in summaries:
+            ph = s["analysis"].get("per_horizon", {})
+            stats = ph.get(h) or ph.get(str(h))
+            if stats:
+                w_avg = stats.get("w_avg_return", stats["avg_return"])
+                lines.append(
+                    f"| {s['label']} | {s['days']} | {stats['n']:,} | "
+                    f"{stats['win_rate']:.1f}% | {w_avg:+.2f}% | "
+                    f"{stats['median_return']:+.2f}% |"
+                )
+                all_wr.append(stats["win_rate"])
+                all_wa.append(w_avg)
+                all_med.append(stats["median_return"])
+
+        if all_wr:
+            lines.append(
+                f"| **Average** | | | **{np.mean(all_wr):.1f}%** | "
+                f"**{np.mean(all_wa):+.2f}%** | **{np.mean(all_med):+.2f}%** |"
+            )
+            lines.append(
+                f"| **Std Dev** | | | {np.std(all_wr):.1f}% | "
+                f"{np.std(all_wa):.2f}% | {np.std(all_med):.2f}% |"
+            )
+        lines.append("")
+
+    # Regime distribution
+    lines.append("## Regime Distribution (5-day pick counts)")
+    lines.append("")
+    lines.append("| Window | Favorable | Mixed | Caution |")
+    lines.append("|--------|-----------|-------|---------|")
+    for s in summaries:
+        br = s["analysis"].get("by_regime", {})
+        fav = br.get("favorable", {}).get(5) or br.get("favorable", {}).get("5", {})
+        mix = br.get("mixed", {}).get(5) or br.get("mixed", {}).get("5", {})
+        cau = br.get("caution", {}).get(5) or br.get("caution", {}).get("5", {})
+        fav_n = fav.get("n", 0) if fav else 0
+        mix_n = mix.get("n", 0) if mix else 0
+        cau_n = cau.get("n", 0) if cau else 0
+        lines.append(f"| {s['label']} | {fav_n} | {mix_n} | {cau_n} |")
+    lines.append("")
+
+    # Per-window regime win rates
+    lines.append("## Regime Win Rates (5-day)")
+    lines.append("")
+    lines.append("| Window | Favorable | Mixed | Caution |")
+    lines.append("|--------|-----------|-------|---------|")
+    for s in summaries:
+        br = s["analysis"].get("by_regime", {})
+        parts = []
+        for regime in ("favorable", "mixed", "caution"):
+            rd = br.get(regime, {})
+            stats = rd.get(5) or rd.get("5", {})
+            if stats and stats.get("n", 0) >= 20:
+                parts.append(f"{stats['win_rate']:.1f}%")
+            else:
+                parts.append("—")
+        lines.append(f"| {s['label']} | {' | '.join(parts)} |")
+    lines.append("")
+
+    md_path = TEST_RESULTS_DIR / f"{today}_multi_window.md"
+    md_path.write_text("\n".join(lines))
+    return md_path
+
+
+# ── Simulation core ──────────────────────────────────────────────────────
+
+
+def _run_simulation(
+    raw_tickers: list[str],
+    price_data: dict[str, pd.DataFrame],
+    test_dates: pd.DatetimeIndex,
+    *,
+    label: str = "Backtesting",
+    use_checkpoint: bool = False,
+) -> list[dict]:
+    """Run walk-forward simulation over *test_dates*. Returns daily_results."""
+    print()
+    print("[2/4] Walk-forward simulation...")
+
+    daily_results: list[dict] = []
+    checkpoint_path = BACKTEST_DIR / "checkpoint.json"
+
+    completed_dates: set[str] = set()
+    if use_checkpoint and checkpoint_path.exists():
+        try:
+            with open(checkpoint_path) as f:
+                saved = json.load(f)
+            daily_results = saved.get("daily_results", [])
+            completed_dates = {r["date"] for r in daily_results}
+            print(f"  Resuming from checkpoint ({len(completed_dates)} days done)")
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    for i, date in enumerate(tqdm(test_dates, desc=f"  {label}", unit="day")):
+        date_str = date.strftime("%Y-%m-%d")
+        if date_str in completed_dates:
+            continue
+
+        sliced = _slice_data(price_data, date)
+        universe = _filter_universe_at(raw_tickers, sliced)
+        if len(universe) < 50:
+            daily_results.append(
+                {"date": date_str, "regime": "insufficient_data", "picks": []}
+            )
+            continue
+
+        ctx = compute_market_context(sliced, universe)
+        regime = ctx["regime"]
+
+        if regime == "risk_off":
+            daily_results.append(
+                {"date": date_str, "regime": "risk_off", "picks": []}
+            )
+            continue
+
+        rs_data = compute_universe_rs(sliced, universe)
+
+        watchlist: list[dict] = []
+        for ticker in universe:
+            df = sliced.get(ticker)
+            if df is None:
+                continue
+            consol = compute_consolidation(ticker, df)
+            if consol is None:
+                continue
+            rs = rs_data.get(ticker)
+            if rs is None:
+                continue
+            abr = compute_abr(df)
+            cat = compute_catalyst(ticker, df) or {}
+            vol = compute_volume(ticker, df) or {}
+            bl = compute_breakout_level(ticker, df) or {}
+            wk = compute_weekly(ticker, df) or {}
+            watchlist.append(
+                {"ticker": ticker, "abr": abr, **rs, **consol, **cat, **vol, **bl, **wk}
+            )
+
+        watchlist = rank_watchlist(watchlist)
+        top = watchlist[:TOP_N]
+
+        picks = []
+        for rank, stock in enumerate(top, 1):
+            fwd = _forward_returns(price_data, stock["ticker"], date)
+            picks.append(
+                {
+                    "ticker": stock["ticker"],
+                    "rank": rank,
+                    "factors": {k: stock.get(k) for k in _SAVED_FACTORS},
+                    "forward_returns": fwd,
+                }
+            )
+
+        daily_results.append(
+            {
+                "date": date_str,
+                "regime": regime,
+                "universe_size": len(universe),
+                "watchlist_size": len(watchlist),
+                "picks": picks,
+            }
+        )
+
+        if use_checkpoint and (i + 1) % 10 == 0:
+            _save_checkpoint(checkpoint_path, daily_results)
+
+    if use_checkpoint:
+        checkpoint_path = BACKTEST_DIR / "checkpoint.json"
+        checkpoint_path.unlink(missing_ok=True)
+
+    return daily_results
 
 
 # ── Data helpers ──────────────────────────────────────────────────────────

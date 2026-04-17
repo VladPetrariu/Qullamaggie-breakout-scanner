@@ -262,6 +262,9 @@ if __name__ == "__main__":
     if "--watch" in sys.argv:
         from .watcher import watch
         watch()
+    elif "--backtest-multi" in sys.argv:
+        from .backtest import run_multi_window_backtest
+        run_multi_window_backtest()
     elif "--backtest" in sys.argv:
         from .backtest import run_backtest
         run_backtest()

@@ -10,9 +10,8 @@ build/
 cache/
 scans/
 
-# Backtest working files (results.json is large; test_results/ has the summaries)
-backtest/checkpoint.json
-backtest/results.json
+# Backtest working files (large JSON; test_results/ has the summaries)
+backtest/
 
 # Local planning docs (not for GitHub)
 PLAN.md

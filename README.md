@@ -99,9 +99,10 @@ The dashboard opens automatically at `scans/scan_YYYY-MM-DD.html`.
 ### Other modes
 
 ```bash
-python -m scanner --watch      # Intraday monitor — polls prices, macOS alerts on breakout
-python -m scanner --backtest   # Walk-forward backtest — validates rankings against historical data
-python -m scanner --analyze    # Multi-factor combination analysis on saved backtest results
+python -m scanner --watch          # Intraday monitor — polls prices, macOS alerts on breakout
+python -m scanner --backtest       # Walk-forward backtest — validates rankings against historical data
+python -m scanner --backtest-multi # Robustness test — 6 non-overlapping windows across 3 years
+python -m scanner --analyze        # Multi-factor combination analysis on saved backtest results
 ```
 
 ## Dashboard
@@ -205,6 +206,22 @@ Win rate above 50% at all horizons. Median and winsorized average returns positi
 
 Top 5 ranked stocks outperform top 20 (10d winsorized avg: +1.15% vs +0.95%), confirming the ranking correctly identifies the best setups.
 
+### Multi-window robustness (Jun 2023 -- Mar 2026, 6 windows)
+
+The same ranking tested across 6 non-overlapping ~6-month windows spanning 3 years (13,500 total picks):
+
+| Window | 5d Win Rate | 5d Median | 10d Win Rate | Market conditions |
+|--------|-------------|-----------|--------------|-------------------|
+| Jun-Dec 2023 | 51.0% | +0.08% | 51.1% | Mixed-heavy |
+| Dec 2023-May 2024 | 54.5% | +0.44% | 56.0% | Bull market |
+| May-Nov 2024 | 52.1% | +0.18% | 50.4% | Bull market |
+| Nov 2024-Apr 2025 | 46.6% | -0.34% | 45.0% | Choppy/mixed |
+| Apr-Oct 2025 | 56.1% | +0.61% | 59.3% | Strong bull |
+| Oct 2025-Mar 2026 | 50.4% | +0.03% | 53.0% | Mostly favorable |
+| **Average** | **51.8%** | **+0.17%** | **52.5%** | |
+
+The edge is consistent in favorable market conditions (5 of 6 windows positive) but disappears in choppy/mixed regimes. Regime-adaptive position sizing — fewer trades in mixed markets — is the key to translating this edge into actual profits.
+
 ### How we got here: iterative backtesting
 
 The ranking system was overhauled through five iterations, each validated by walk-forward backtest:
@@ -242,7 +259,7 @@ Full quintile breakdowns and methodology details are in [`test_results/`](test_r
 
 - **End-of-day data only** — yfinance provides daily bars, not intraday. Use this for pre-market watchlist building, not live entries
 - **Catalyst detection is approximate** — volume spikes are a proxy for actual news events (earnings, FDA, contracts)
-- **Ranking has modest edge** — backtesting shows 52.4% win rate and positive median returns at all horizons, strongest at 10 days (56.1%)
+- **Ranking has modest, regime-dependent edge** — backtesting shows 51.8% average win rate across 6 time windows (range: 46.6%-56.1%). Edge strongest in favorable markets, weakest in mixed/choppy conditions
 - **yfinance rate limits** — first run downloads ~7,000 tickers; occasional throttling is normal
 
 ## Background
