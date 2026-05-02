@@ -94,3 +94,22 @@ SECTOR_ETFS = {
 
 # Extra tickers that always need price data (benchmarks)
 BENCHMARK_TICKERS = ["SPY", "^VIX"] + list(SECTOR_ETFS.values())
+
+# ---------------------------------------------------------------------------
+# Trade signal generation (Phase 10, step 51)
+# Picked from exit-strategy backtest (test_results/2026-05-01_exit_strategies.md):
+# 3×ATR stop / 10d max hold / no trailing was the best risk-managed strategy.
+# Mixed/caution regimes had negative expectancy across every exit policy,
+# so we trade only in favorable regime.
+# ---------------------------------------------------------------------------
+DEFAULT_ACCOUNT_EQUITY = 25_000.0   # paper account starting balance; --equity overrides
+RISK_PER_TRADE_PCT = 0.01           # 1% of account at risk per trade
+MAX_POSITION_PCT = 0.20             # cap any single position at 20% of account
+MAX_CONCURRENT_POSITIONS = 5        # max signals issued per day in favorable regime
+STOP_ATR_MULTIPLIER = 3.0           # entry minus N × ATR(14) = stop
+MAX_HOLD_DAYS = 10                  # time-based exit horizon
+MIN_STOP_DISTANCE_PCT = 3.0         # floor: don't place a stop tighter than this
+MAX_ENTRY_OVERSHOOT_PCT = 0.5       # skip if last_close > entry × (1 + this/100) — too extended
+MAX_LEVEL_DISTANCE_PCT = 3.0        # skip if level is more than this % above last_close — too far to trigger
+ENTRY_BUFFER_PCT = 0.1              # limit-order placed at entry × (1 + this/100)
+SIGNAL_TRADABLE_REGIMES = ("favorable",)

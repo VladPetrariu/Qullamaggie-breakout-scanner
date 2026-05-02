@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 from .cache import Cache
 from .charts import generate_charts_batch
-from .config import CACHE_DIR, SCANS_DIR
+from .config import CACHE_DIR, DEFAULT_ACCOUNT_EQUITY, SCANS_DIR
 from .dashboard import compute_deltas, generate_dashboard, load_prior_scan, open_dashboard, save_scan_json
 from .data import download_prices
 from .factors.breakout_level import compute_breakout_level
@@ -19,6 +19,7 @@ from .factors.volume import compute_volume
 from .factors.weekly import compute_weekly
 from .profile import compute_abr, fetch_stock_profiles
 from .ranking import rank_watchlist
+from .signals import generate_signals, print_signals, save_signals
 from .tracker import compute_track_record
 from .universe import fetch_ticker_list, fetch_ticker_info, filter_universe
 
@@ -30,7 +31,7 @@ _REGIME_DISPLAY = {
 }
 
 
-def main():
+def main(*, print_signals_to_terminal: bool = False, account_equity: float = DEFAULT_ACCOUNT_EQUITY):
     start = time.time()
     print()
     print("  Qullamaggie Breakout Scanner")
@@ -71,6 +72,11 @@ def main():
     if ctx["regime"] == "risk_off":
         print()
         print("  Market is risk-off — suppressing all setups.")
+        # Save an empty signals file so downstream bot logic always finds something
+        empty_signals, summary = generate_signals([], "risk_off", price_data, account_equity)
+        save_signals(empty_signals, summary)
+        if print_signals_to_terminal:
+            print_signals(empty_signals, summary)
         path = generate_dashboard(ctx, [], len(universe))
         open_dashboard(path)
         print(f"  Dashboard: {path}")
@@ -236,6 +242,15 @@ def main():
     print(f"  JSON: {json_path}")
     print(f"  HTML: {html_path}")
 
+    # Trade signals — always saved, printed only when --signals flag is set
+    signals, sig_summary = generate_signals(
+        watchlist, ctx["regime"], price_data, account_equity
+    )
+    sig_path = save_signals(signals, sig_summary)
+    print(f"  Signals: {sig_path} ({len(signals)} issued)")
+    if print_signals_to_terminal:
+        print_signals(signals, sig_summary)
+
     elapsed = time.time() - start
     print()
     print(f"  Done in {elapsed:.1f}s — opening dashboard...")
@@ -258,6 +273,21 @@ def _print_market_context(ctx):
     print(f"  Breakout follow-through: {ctx['breakout_followthrough']}%")
 
 
+def _parse_equity_arg(argv: list[str]) -> float:
+    """Pull --equity AMOUNT from argv. Default to DEFAULT_ACCOUNT_EQUITY."""
+    if "--equity" not in argv:
+        return DEFAULT_ACCOUNT_EQUITY
+    i = argv.index("--equity")
+    if i + 1 >= len(argv):
+        print(f"  ERROR: --equity flag needs a value (e.g. --equity 25000)")
+        sys.exit(1)
+    try:
+        return float(argv[i + 1])
+    except ValueError:
+        print(f"  ERROR: --equity value must be numeric, got '{argv[i + 1]}'")
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     if "--watch" in sys.argv:
         from .watcher import watch
@@ -271,5 +301,12 @@ if __name__ == "__main__":
     elif "--analyze" in sys.argv:
         from .backtest import run_combination_analysis
         run_combination_analysis()
+    elif "--exit-backtest" in sys.argv:
+        from .exit_backtest import run_exit_backtest
+        run_exit_backtest()
     else:
-        main()
+        equity = _parse_equity_arg(sys.argv)
+        main(
+            print_signals_to_terminal="--signals" in sys.argv,
+            account_equity=equity,
+        )

@@ -16,3 +16,7 @@ backtest/
 # Local planning docs (not for GitHub)
 PLAN.md
 CLAUDE.md
+
+# OS / editor / agent state
+.DS_Store
+.claude/

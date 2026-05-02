@@ -99,11 +99,16 @@ The dashboard opens automatically at `scans/scan_YYYY-MM-DD.html`.
 ### Other modes
 
 ```bash
-python -m scanner --watch          # Intraday monitor — polls prices, macOS alerts on breakout
-python -m scanner --backtest       # Walk-forward backtest — validates rankings against historical data
-python -m scanner --backtest-multi # Robustness test — 6 non-overlapping windows across 3 years
-python -m scanner --analyze        # Multi-factor combination analysis on saved backtest results
+python -m scanner --watch              # Intraday monitor — polls prices, macOS alerts on breakout
+python -m scanner --backtest           # Walk-forward backtest — validates rankings against historical data
+python -m scanner --backtest-multi     # Robustness test — 6 non-overlapping windows across 3 years
+python -m scanner --analyze            # Multi-factor combination analysis on saved backtest results
+python -m scanner --exit-backtest      # Exit-strategy backtest — simulates stops/trailing on saved picks
+python -m scanner --signals            # Print actionable trade signals (entry / stop / size) for today
+python -m scanner --signals --equity 50000  # Override default $25K account size
 ```
+
+Signals are always written to `scans/signals_YYYY-MM-DD.json` whenever the scanner runs — the `--signals` flag just also prints them to the terminal.
 
 ## Dashboard
 
@@ -247,11 +252,30 @@ The ranking applies these rules in order:
 5. **ABR distance to level** (quaternary) — closer to breakout level = higher rank.
 6. **Penalties** — post-catalyst cooldown (fresh catalyst + loose ATR = penalty) and extension penalty (>2 ABR above breakout level).
 
-### What's next: AI analysis + autonomous trading
+### Exit strategy backtest (May 2026)
 
-**Phase 9 (in progress):** AI-enhanced analysis using Claude to review each top stock's chart and factor profile. Identifies patterns and red flags that numerical factors miss (distribution patterns that score well on ATR compression, descending triangles near ATH). Acts as a quality filter between the scanner and trade execution.
+Before wiring trade execution, simulated 12 stop / trailing / time-based exit strategies on the same 13,500 multi-window picks (`--exit-backtest` mode). Findings:
 
-**Phase 10 (planned):** Fully autonomous trading bot using Alpaca's paper trading API. The complete pipeline: scan → AI analysis → trade execution → result tracking → self-improvement. Every trade generates real data (fills, slippage, timing) that feeds back into the system. Paper account only until provably profitable over 100+ trades with consistent win rate across market regimes.
+- **Tight stops destroy the edge.** Every variant tighter than 3×ATR (5%, 2×ATR, 2×ATR trailing) flipped the median return negative — they get whipsawed by normal pullbacks.
+- **Trailing stops are net-harmful** even at 3×ATR — breakouts need room to consolidate.
+- **3×ATR initial stop, 10-day max hold** matches buy-and-hold on win rate (51.4% vs 52.6%) and median (+0.20% vs +0.34%) while bounding worst-case loss to ~5-7%. Only fires 19% of the time.
+- **Mixed regime is unprofitable across every strategy** — the trading bot must skip mixed-regime days entirely.
+
+Full results: [`test_results/2026-05-01_exit_strategies.md`](test_results/2026-05-01_exit_strategies.md).
+
+### What's next: autonomous trading bot
+
+**Phase 10 (in progress):** Fully autonomous bot. Two of seven steps shipped so far:
+
+- ✅ **Step 53b — exit strategy backtest** (above): chose 3×ATR / 10d / favorable-regime-only as the bot's default policy.
+- ✅ **Step 51 — trade signal generator** ([`scanner/signals.py`](scanner/signals.py)): converts each day's ranked watchlist into actionable signals — entry price, stop, position size (1% account risk, 20% position cap), max 5 concurrent. Saved automatically to `scans/signals_*.json`; `--signals` flag also prints them.
+- ⏸️ **Step 52 — trade execution** (paused on user decision). Three options on the table:
+  1. **Local paper simulator** (recommended) — simulate fills against next-day OHLC, no broker, no KYC, fastest iteration loop
+  2. **Alpaca paper account** — real fills + same backend as live, but requires full KYC (SSN/address/agreement) even for paper
+  3. **Tradier sandbox** — less KYC friction, but smaller community and would need re-port for live
+- 🔜 Steps 53-57: risk engine, exit execution, live tracker, feedback loop, go-live gate (100+ paper trades, positive P&L, max drawdown <10%).
+
+**Phase 9 (deferred):** AI-enhanced analysis using Claude. Originally planned next, but reprioritized — its value is unverifiable at backtest scale (too expensive across 13,500 picks). Will revisit as an A/B filter on top of the running bot once we have ≥100 paper trades.
 
 Full quintile breakdowns and methodology details are in [`test_results/`](test_results/).
 
