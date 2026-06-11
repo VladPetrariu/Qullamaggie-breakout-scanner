@@ -108,11 +108,22 @@ python -m scanner --exit-backtest      # Exit-strategy backtest — simulates st
 python -m scanner --signals            # Print actionable trade signals (entry / stop / size) for today
 python -m scanner --signals --equity 50000  # Override default $25K account size
 python -m scanner --paper              # Paper trading — simulate fills for saved signals, track P&L
-python -m scanner --paper-status       # Show the paper account without simulating anything
+python -m scanner --paper-status       # Quick view of the paper account
+python -m scanner --paper-report      # Full report: stats, signal funnel, go-live gate, daily equity
 python -m scanner --paper-reset       # Delete the paper account and start over
+python -m scanner --no-open            # Run the scan without opening the dashboard (for cron/launchd)
 ```
 
 Signals are always written to `scans/signals_YYYY-MM-DD.json` whenever the scanner runs — the `--signals` flag just also prints them to the terminal. The paper simulator consumes those files: run the scan before the open, then run `--paper` any later day to find out what actually happened to each signal.
+
+### Run it automatically every morning (macOS)
+
+```bash
+./scripts/install_automation.sh                      # launchd agent: weekdays 5:45 AM local
+sudo pmset repeat wakeorpoweron MTWRF 05:43:00       # wake the Mac 2 min early (optional)
+```
+
+The agent runs the scan pre-market, then the paper simulator, logging to `logs/`. If the Mac is asleep at 5:45 it runs at the next wake; if it was off, the next run catches up the simulation automatically (processing is idempotent). Keep the Mac plugged in and logged in for unattended runs. Note: macOS blocks background jobs from reading `~/Desktop`/`~/Documents` — keep the project somewhere like `~/Projects`.
 
 ## Dashboard
 
@@ -169,6 +180,7 @@ scanner/
 ├── exit_backtest.py         # Stop/trailing/partial-profit exit simulation
 ├── signals.py               # Trade signal generator (entry / stop / size)
 ├── paper_simulator.py       # Local paper-trading simulator (no broker needed)
+├── paper_report.py          # Full account report: stats, funnel, go-live gate
 └── factors/
     ├── market_context.py    # 5 breadth indicators → regime classification
     ├── catalyst.py          # Volume spike proxy → tier → freshness scoring
@@ -177,8 +189,12 @@ scanner/
     ├── relative_strength.py # ATR-normalized RS vs universe + sector ETF
     ├── breakout_level.py    # ATH / multi-year / 52wk / prior resistance
     └── weekly.py            # Weekly resampling → coiling/breakout confluence
+scripts/
+├── daily_run.sh             # Scan → paper simulation, with retries and logging
+└── install_automation.sh    # One-command launchd setup (weekday pre-market runs)
 tests/
-└── test_paper_simulator.py  # Unit + end-to-end tests for fills, exits, sizing
+├── test_paper_simulator.py  # Unit + end-to-end tests for fills, exits, sizing
+└── test_paper_report.py     # Tests for report statistics and go-live gate
 ```
 
 ## Configuration
@@ -300,6 +316,7 @@ Full results: [`test_results/2026-05-01_exit_strategies.md`](test_results/2026-0
   - Detects stock splits between signal and simulation; fractional shares settle as cash-in-lieu
   - Positions re-size against current account equity, so compounding stays honest
   - State persists in `paper_trades/` (account, trade log with MAE/MFE analytics, equity curve); re-runs are idempotent
+- ✅ **Daily automation + account reporting**: a launchd agent ([`scripts/`](scripts/)) runs the scan pre-market and the simulator after, every weekday, unattended — the Mac can even wake itself for it. `--paper-report` renders the full picture: trade statistics, signal funnel (issued → filled → expired), day-by-day equity curve, and live progress against the go-live gate.
 - 🔜 Steps 53-57: regime-adaptive risk engine, live tracker, feedback loop, go-live gate (100+ paper trades, positive P&L, max drawdown <10%).
 
 **First replay** (5 signals from the 2026-05-02 scan, simulated against the five weeks of real market data that followed):

@@ -200,6 +200,7 @@ def _collect_new_orders(scans_dir: Path, state: dict) -> list[dict]:
                 f"{before - len(state['pending_orders'])} pending order(s)"
             )
         seen[path.name] = digest
+        file_orders: list[dict] = []
         for sig in payload.get("signals", []):
             active = _earliest_active_date(file_date, sig.get("generated_at", ""))
             last_done = state["last_processed_date"]
@@ -212,7 +213,7 @@ def _collect_new_orders(scans_dir: Path, state: dict) -> list[dict]:
                     "detail": "signal file discovered after its trade day was already simulated",
                 })
                 continue
-            orders.append({
+            file_orders.append({
                 "ticker": sig["ticker"],
                 "rank": sig.get("rank", 99),
                 "level_type": sig.get("level_type", "unknown"),
@@ -223,6 +224,47 @@ def _collect_new_orders(scans_dir: Path, state: dict) -> list[dict]:
                 "signal_last_close": float(sig["last_close"]),
                 "max_hold_days": int(sig.get("max_hold_days", 10)),
             })
+
+        # A newer signal supersedes a still-pending order for the same
+        # ticker when both target the same trade day or later (e.g. a
+        # post-close scan and the next morning's pre-market scan both
+        # signal it) — the freshest view of the setup wins. A pending
+        # order with an EARLIER trade day keeps its shot; if it fills,
+        # the duplicate-ticker guard blocks the newer order. The incoming
+        # file must be strictly newer than the pending order's origin —
+        # an older file discovered late (e.g. after a transient read
+        # failure) must never displace a fresher order. Weekend/holiday
+        # collisions that this calendar-date comparison can't see are
+        # resolved at simulation time in _process_day.
+        new_activation = {o["ticker"]: o["activation_date"] for o in file_orders}
+
+        def _is_superseded(o: dict) -> bool:
+            t = o["ticker"]
+            return (
+                t in new_activation
+                and o["activation_date"] >= new_activation[t]
+                and o["signal_date"] < file_date.isoformat()
+            )
+
+        superseded = [
+            o for o in orders + state["pending_orders"] if _is_superseded(o)
+        ]
+        for old in superseded:
+            state["order_history"].append({
+                "date": old["activation_date"],
+                "ticker": old["ticker"],
+                "signal_date": old["signal_date"],
+                "status": "superseded",
+                "detail": f"newer signal in {path.name}",
+            })
+        if superseded:
+            print(f"  {len(superseded)} pending order(s) superseded by {path.name}")
+        orders[:] = [o for o in orders if not _is_superseded(o)]
+        state["pending_orders"][:] = [
+            o for o in state["pending_orders"] if not _is_superseded(o)
+        ]
+        orders.extend(file_orders)
+
         n = payload.get("summary", {}).get("signals_issued", 0)
         print(f"  Loaded {path.name}: {n} signal(s)")
     return orders
@@ -474,7 +516,28 @@ def _process_day(
         o for o in state["pending_orders"]
         if dt_date.fromisoformat(o["activation_date"]) <= day
     ]
-    for order in sorted(due, key=lambda o: (o["activation_date"], o["rank"])):
+
+    # When several pending orders for the SAME ticker come due together —
+    # e.g. a Friday post-close signal (activation Saturday) and Monday's
+    # pre-market signal both first tradable on Monday — only the freshest
+    # signal runs. The real trading calendar decides these collisions,
+    # which ingestion-time date comparison can't see across weekends and
+    # holidays.
+    freshest: dict[str, dict] = {}
+    for o in due:
+        cur = freshest.get(o["ticker"])
+        if cur is None:
+            freshest[o["ticker"]] = o
+        else:
+            loser, winner = (cur, o) if o["signal_date"] > cur["signal_date"] else (o, cur)
+            freshest[o["ticker"]] = winner
+            state["pending_orders"].remove(loser)
+            _record_order(
+                state, day, loser, "superseded",
+                f"newer signal dated {winner['signal_date']} due the same day",
+            )
+
+    for order in sorted(freshest.values(), key=lambda o: (o["activation_date"], o["rank"])):
         state["pending_orders"].remove(order)
         ticker = order["ticker"]
         df = data.get(ticker)

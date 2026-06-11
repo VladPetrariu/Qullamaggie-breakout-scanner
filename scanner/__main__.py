@@ -31,7 +31,12 @@ _REGIME_DISPLAY = {
 }
 
 
-def main(*, print_signals_to_terminal: bool = False, account_equity: float = DEFAULT_ACCOUNT_EQUITY):
+def main(
+    *,
+    print_signals_to_terminal: bool = False,
+    account_equity: float = DEFAULT_ACCOUNT_EQUITY,
+    open_browser: bool = True,
+):
     start = time.time()
     print()
     print("  Qullamaggie Breakout Scanner")
@@ -78,7 +83,8 @@ def main(*, print_signals_to_terminal: bool = False, account_equity: float = DEF
         if print_signals_to_terminal:
             print_signals(empty_signals, summary)
         path = generate_dashboard(ctx, [], len(universe))
-        open_dashboard(path)
+        if open_browser:
+            open_dashboard(path)
         print(f"  Dashboard: {path}")
         return
 
@@ -253,9 +259,13 @@ def main(*, print_signals_to_terminal: bool = False, account_equity: float = DEF
 
     elapsed = time.time() - start
     print()
-    print(f"  Done in {elapsed:.1f}s — opening dashboard...")
-    print()
-    open_dashboard(html_path)
+    if open_browser:
+        print(f"  Done in {elapsed:.1f}s — opening dashboard...")
+        print()
+        open_dashboard(html_path)
+    else:
+        print(f"  Done in {elapsed:.1f}s (headless — dashboard not opened)")
+        print()
 
 
 def _print_market_context(ctx):
@@ -307,6 +317,9 @@ if __name__ == "__main__":
     elif "--paper-status" in sys.argv:
         from .paper_simulator import print_status
         print_status()
+    elif "--paper-report" in sys.argv:
+        from .paper_report import print_full_report
+        print_full_report()
     elif "--paper-reset" in sys.argv:
         from .paper_simulator import reset_account
         reset_account()
@@ -320,4 +333,5 @@ if __name__ == "__main__":
         main(
             print_signals_to_terminal="--signals" in sys.argv,
             account_equity=equity,
+            open_browser="--no-open" not in sys.argv,
         )

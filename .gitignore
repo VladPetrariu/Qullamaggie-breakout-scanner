@@ -16,6 +16,9 @@ backtest/
 # Paper-trading account state (personal results, not for GitHub)
 paper_trades/
 
+# Automation logs
+logs/
+
 # Local planning docs (not for GitHub)
 PLAN.md
 CLAUDE.md

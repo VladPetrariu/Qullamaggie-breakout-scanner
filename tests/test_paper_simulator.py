@@ -484,3 +484,76 @@ def test_absent_ticker_carries_position(e2e_dirs):
     state = _run(paper_dir, scans_dir, {"SPY": _e2e_data()["SPY"]}, today=date(2026, 5, 9))
     assert len(state["open_positions"]) == 1
     assert state["open_positions"][0]["missing_days"] == 0
+
+
+def test_newer_signal_supersedes_pending_same_ticker(e2e_dirs):
+    paper_dir, scans_dir = e2e_dirs
+    # A post-close scan and the next morning's pre-market scan both signal
+    # AAA for the same trade day — only the newer order may run.
+    sig1 = _sig("AAA", 1, 99.0, 90.0, 9.9)
+    sig1["generated_at"] = "2026-05-04T17:30:00"  # post-close → trades May 5
+    _write_signals(scans_dir, [sig1], "2026-05-04")
+    sig2 = _sig("AAA", 1, 10.12, 9.0, 10.02)
+    sig2["generated_at"] = "2026-05-05T01:00:00"  # pre-market → trades May 5
+    _write_signals(scans_dir, [sig2], "2026-05-05")
+
+    data = {"SPY": _e2e_data()["SPY"], "AAA": _e2e_data()["AAA"]}
+    state = _run(paper_dir, scans_dir, data, today=date(2026, 5, 6))
+
+    superseded = [o for o in state["order_history"] if o["status"] == "superseded"]
+    assert len(superseded) == 1
+    assert superseded[0]["signal_date"] == "2026-05-04"
+    filled = [o for o in state["order_history"] if o["status"] == "filled"]
+    assert len(filled) == 1
+    assert len(state["open_positions"]) == 1
+    assert state["open_positions"][0]["fill_price"] == pytest.approx(10.12)
+
+
+def test_late_discovered_older_file_does_not_supersede(e2e_dirs):
+    paper_dir, scans_dir = e2e_dirs
+    data = {"SPY": _e2e_data()["SPY"], "AAA": _e2e_data()["AAA"]}
+    # The older file exists but is unreadable on the first run (e.g. a
+    # partially-synced scans/ dir) — it gets retried later.
+    scans_dir.mkdir(parents=True, exist_ok=True)
+    (scans_dir / "signals_2026-05-04.json").write_text("{ truncated")
+    sig_new = _sig("AAA", 1, 10.12, 9.0, 10.02)
+    sig_new["generated_at"] = "2026-05-05T01:00:00"  # trades May 5
+    _write_signals(scans_dir, [sig_new], "2026-05-05")
+    _run(paper_dir, scans_dir, data, today=date(2026, 5, 5))
+
+    # The older post-close file becomes readable, with stale levels.
+    sig_old = _sig("AAA", 1, 99.0, 90.0, 9.9)
+    sig_old["generated_at"] = "2026-05-04T17:30:00"  # also trades May 5
+    _write_signals(scans_dir, [sig_old], "2026-05-04")
+    state = _run(paper_dir, scans_dir, data, today=date(2026, 5, 6))
+
+    # The fresher order trades; the stale one is superseded — not vice versa.
+    filled = [o for o in state["order_history"] if o["status"] == "filled"]
+    assert len(filled) == 1
+    assert filled[0]["signal_date"] == "2026-05-05"
+    superseded = [o for o in state["order_history"] if o["status"] == "superseded"]
+    assert [o["signal_date"] for o in superseded] == ["2026-05-04"]
+    assert state["open_positions"][0]["fill_price"] == pytest.approx(10.12)
+
+
+def test_friday_postclose_superseded_by_monday_premarket(e2e_dirs):
+    paper_dir, scans_dir = e2e_dirs
+    # Friday post-close signal: activation Saturday → first tradable Monday.
+    sig_fri = _sig("AAA", 1, 99.0, 90.0, 9.9)
+    sig_fri["generated_at"] = "2026-05-01T17:30:00"
+    _write_signals(scans_dir, [sig_fri], "2026-05-01")
+    # Monday pre-market signal with fresh levels — same first trade day.
+    sig_mon = _sig("AAA", 1, 10.0, 9.0, 9.9)
+    sig_mon["generated_at"] = "2026-05-04T01:00:00"
+    _write_signals(scans_dir, [sig_mon], "2026-05-04")
+
+    data = {"SPY": _e2e_data()["SPY"], "AAA": _e2e_data()["AAA"]}
+    state = _run(paper_dir, scans_dir, data, today=date(2026, 5, 5))
+
+    # The calendar collision resolves to the freshest signal.
+    superseded = [o for o in state["order_history"] if o["status"] == "superseded"]
+    assert [o["signal_date"] for o in superseded] == ["2026-05-01"]
+    filled = [o for o in state["order_history"] if o["status"] == "filled"]
+    assert len(filled) == 1
+    assert filled[0]["signal_date"] == "2026-05-04"
+    assert state["open_positions"][0]["fill_price"] == pytest.approx(10.0)
