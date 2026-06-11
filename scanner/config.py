@@ -113,3 +113,12 @@ MAX_ENTRY_OVERSHOOT_PCT = 0.5       # skip if last_close > entry × (1 + this/10
 MAX_LEVEL_DISTANCE_PCT = 3.0        # skip if level is more than this % above last_close — too far to trigger
 ENTRY_BUFFER_PCT = 0.1              # limit-order placed at entry × (1 + this/100)
 SIGNAL_TRADABLE_REGIMES = ("favorable",)
+
+# ---------------------------------------------------------------------------
+# Paper-trading simulator (Phase 10, step 52 — Option A)
+# Local fill simulation against real daily OHLC. State in paper_trades/
+# (gitignored — personal trading results stay off GitHub).
+# ---------------------------------------------------------------------------
+PAPER_DIR = PROJECT_ROOT / "paper_trades"
+PAPER_STALE_DATA_FORCE_CLOSE_DAYS = 5  # force-close after N straight days without data
+PAPER_SPLIT_TOLERANCE_PCT = 2.0        # rescale prices when adjusted history shifts more than this

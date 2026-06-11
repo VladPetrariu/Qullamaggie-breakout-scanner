@@ -304,6 +304,17 @@ if __name__ == "__main__":
     elif "--exit-backtest" in sys.argv:
         from .exit_backtest import run_exit_backtest
         run_exit_backtest()
+    elif "--paper-status" in sys.argv:
+        from .paper_simulator import print_status
+        print_status()
+    elif "--paper-reset" in sys.argv:
+        from .paper_simulator import reset_account
+        reset_account()
+    elif "--paper" in sys.argv:
+        from .paper_simulator import run_paper_simulator
+        run_paper_simulator(
+            equity=_parse_equity_arg(sys.argv) if "--equity" in sys.argv else None
+        )
     else:
         equity = _parse_equity_arg(sys.argv)
         main(

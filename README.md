@@ -76,6 +76,7 @@ The problem is finding them. You'd have to look at thousands of charts every mor
 - **Dark-mode dashboard** — filterable by sector, EMA stack, catalyst status, breakout level
 - **Clickable tickers** — each stock links directly to its TradingView chart
 - **Historical comparison** — NEW badges and rank change arrows vs prior day's scan
+- **Trade signals + paper trading** — sized entry/stop signals (1% risk) and a local fill simulator that tracks P&L against real next-day data, no broker account needed
 - **Offline & private** — everything runs locally, no data leaves your machine
 
 ## Quick Start
@@ -106,9 +107,12 @@ python -m scanner --analyze            # Multi-factor combination analysis on sa
 python -m scanner --exit-backtest      # Exit-strategy backtest — simulates stops/trailing on saved picks
 python -m scanner --signals            # Print actionable trade signals (entry / stop / size) for today
 python -m scanner --signals --equity 50000  # Override default $25K account size
+python -m scanner --paper              # Paper trading — simulate fills for saved signals, track P&L
+python -m scanner --paper-status       # Show the paper account without simulating anything
+python -m scanner --paper-reset       # Delete the paper account and start over
 ```
 
-Signals are always written to `scans/signals_YYYY-MM-DD.json` whenever the scanner runs — the `--signals` flag just also prints them to the terminal.
+Signals are always written to `scans/signals_YYYY-MM-DD.json` whenever the scanner runs — the `--signals` flag just also prints them to the terminal. The paper simulator consumes those files: run the scan before the open, then run `--paper` any later day to find out what actually happened to each signal.
 
 ## Dashboard
 
@@ -137,16 +141,20 @@ SEC EDGAR tickers → yfinance OHLCV download → price/volume filter
                                           │  • Weekly Confluence  │
                                           └───────────────────────┘
                                                       ↓
-                                            3-tier ranking sort
+                                            4-tier ranking sort
                                                       ↓
                                         HTML dashboard + JSON export
+                                                      ↓
+                                     trade signals (entry / stop / size)
+                                                      ↓
+                                       local paper-trading simulator
 ```
 
 ## Project Structure
 
 ```
 scanner/
-├── __main__.py              # 8-step pipeline orchestrator
+├── __main__.py              # 8-step pipeline orchestrator + CLI dispatch
 ├── config.py                # All thresholds and constants (single source of truth)
 ├── cache.py                 # Parquet + JSON file cache with TTL
 ├── universe.py              # SEC EDGAR ticker fetch + price/volume filter
@@ -154,6 +162,13 @@ scanner/
 ├── profile.py               # Float, short interest, sector (threaded)
 ├── ranking.py               # Evidence-based watchlist sort
 ├── dashboard.py             # Jinja2 HTML generation + historical comparison
+├── charts.py                # Mini candlestick chart generator (matplotlib)
+├── tracker.py               # Historical result tracking (post-scan outcomes)
+├── watcher.py               # Intraday --watch mode with price alerts
+├── backtest.py              # Walk-forward backtesting engine
+├── exit_backtest.py         # Stop/trailing/partial-profit exit simulation
+├── signals.py               # Trade signal generator (entry / stop / size)
+├── paper_simulator.py       # Local paper-trading simulator (no broker needed)
 └── factors/
     ├── market_context.py    # 5 breadth indicators → regime classification
     ├── catalyst.py          # Volume spike proxy → tier → freshness scoring
@@ -162,6 +177,8 @@ scanner/
     ├── relative_strength.py # ATR-normalized RS vs universe + sector ETF
     ├── breakout_level.py    # ATH / multi-year / 52wk / prior resistance
     └── weekly.py            # Weekly resampling → coiling/breakout confluence
+tests/
+└── test_paper_simulator.py  # Unit + end-to-end tests for fills, exits, sizing
 ```
 
 ## Configuration
@@ -191,6 +208,13 @@ Everything is free — no API keys, no subscriptions:
 - Python 3.10+
 - ~200MB disk space for cached data
 - Internet connection (for data download only — dashboard works offline)
+
+For development, install pytest and run the test suite:
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest tests/
+```
 
 ## Backtesting & Results
 
@@ -258,22 +282,37 @@ Before wiring trade execution, simulated 12 stop / trailing / time-based exit st
 
 - **Tight stops destroy the edge.** Every variant tighter than 3×ATR (5%, 2×ATR, 2×ATR trailing) flipped the median return negative — they get whipsawed by normal pullbacks.
 - **Trailing stops are net-harmful** even at 3×ATR — breakouts need room to consolidate.
-- **3×ATR initial stop, 10-day max hold** matches buy-and-hold on win rate (51.4% vs 52.6%) and median (+0.20% vs +0.34%) while bounding worst-case loss to ~5-7%. Only fires 19% of the time.
+- **3×ATR initial stop, 10-day max hold** matches buy-and-hold on win rate (51.4% vs 52.6%) and median (+0.20% vs +0.34%) while cutting the average drawdown to ~5%. Only fires 19% of the time. (Stops are not a hard floor — a stock can still gap far below the stop overnight, so position sizing carries the real risk control.)
 - **Mixed regime is unprofitable across every strategy** — the trading bot must skip mixed-regime days entirely.
 
 Full results: [`test_results/2026-05-01_exit_strategies.md`](test_results/2026-05-01_exit_strategies.md).
 
-### What's next: autonomous trading bot
+### Paper trading: the bot's first leg
 
-**Phase 10 (in progress):** Fully autonomous bot. Two of seven steps shipped so far:
+**Phase 10 (in progress):** Fully autonomous bot. Three of seven steps shipped so far:
 
 - ✅ **Step 53b — exit strategy backtest** (above): chose 3×ATR / 10d / favorable-regime-only as the bot's default policy.
 - ✅ **Step 51 — trade signal generator** ([`scanner/signals.py`](scanner/signals.py)): converts each day's ranked watchlist into actionable signals — entry price, stop, position size (1% account risk, 20% position cap), max 5 concurrent. Saved automatically to `scans/signals_*.json`; `--signals` flag also prints them.
-- ⏸️ **Step 52 — trade execution** (paused on user decision). Three options on the table:
-  1. **Local paper simulator** (recommended) — simulate fills against next-day OHLC, no broker, no KYC, fastest iteration loop
-  2. **Alpaca paper account** — real fills + same backend as live, but requires full KYC (SSN/address/agreement) even for paper
-  3. **Tradier sandbox** — less KYC friction, but smaller community and would need re-port for live
-- 🔜 Steps 53-57: risk engine, exit execution, live tracker, feedback loop, go-live gate (100+ paper trades, positive P&L, max drawdown <10%).
+- ✅ **Step 52 — local paper-trading simulator** ([`scanner/paper_simulator.py`](scanner/paper_simulator.py)): consumes the saved signals and simulates execution against actual daily OHLC bars — no broker account, no KYC, no API keys. Deliberately *more* pessimistic than the backtest:
+  - Entries fill at the limit when the day's high crosses it, at the open on a small gap up, and are **abandoned entirely if price gaps >0.5% past the level** — the bot never chases
+  - Gap-down opens fill stops **at the open**, not at the stop price
+  - If the entry day's low also touched the stop, it assumes the worst and exits same-day
+  - Detects stock splits between signal and simulation; fractional shares settle as cash-in-lieu
+  - Positions re-size against current account equity, so compounding stays honest
+  - State persists in `paper_trades/` (account, trade log with MAE/MFE analytics, equity curve); re-runs are idempotent
+- 🔜 Steps 53-57: regime-adaptive risk engine, live tracker, feedback loop, go-live gate (100+ paper trades, positive P&L, max drawdown <10%).
+
+**First replay** (5 signals from the 2026-05-02 scan, simulated against the five weeks of real market data that followed):
+
+| Signal | Result | What happened |
+|--------|--------|---------------|
+| WOLF | **+57.9%** (time exit) | Dipped -14.9% mid-hold — the wide 3×ATR stop held, then it ran |
+| EXTR | +5.2% (time exit) | Clean breakout, clean exit |
+| CC | -12.5% (stopped) | Loss = $250, exactly the 1% risk budget — sizing did its job |
+| SILA | no fill | Never crossed the breakout level |
+| STX | no fill | Gapped past the entry — correctly not chased |
+
+Account: **+1.39% in 10 trading days of exposure, max drawdown -1.14%.** Five weeks of out-of-sample data, and the two design pillars both showed up: wide stops let winners breathe, and risk-based sizing kept the loser at exactly one risk unit.
 
 **Phase 9 (deferred):** AI-enhanced analysis using Claude. Originally planned next, but reprioritized — its value is unverifiable at backtest scale (too expensive across 13,500 picks). Will revisit as an A/B filter on top of the running bot once we have ≥100 paper trades.
 

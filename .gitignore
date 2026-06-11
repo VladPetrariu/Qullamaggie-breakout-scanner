@@ -13,6 +13,9 @@ scans/
 # Backtest working files (large JSON; test_results/ has the summaries)
 backtest/
 
+# Paper-trading account state (personal results, not for GitHub)
+paper_trades/
+
 # Local planning docs (not for GitHub)
 PLAN.md
 CLAUDE.md

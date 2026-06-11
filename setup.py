@@ -12,6 +12,7 @@ setup(
         "tqdm>=4.65",
         "jinja2>=3.1",
         "pyarrow>=14.0",
+        "matplotlib>=3.7",
     ],
     entry_points={
         "console_scripts": [
