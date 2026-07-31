@@ -8,6 +8,7 @@ from scanner.paper_report import (
     _gate_status,
     _sparkline,
     _trade_stats,
+    _wilson_ci,
 )
 
 
@@ -73,11 +74,21 @@ def test_funnel_counts():
     assert f["attempted"] == 4
 
 
+def test_wilson_ci_brackets_the_point_estimate():
+    lo, hi = _wilson_ci(30, 60)
+    assert lo < 50.0 < hi
+    assert lo == pytest.approx(37.6, abs=0.5)
+    assert hi == pytest.approx(62.4, abs=0.5)
+    # More trades → tighter interval.
+    lo2, hi2 = _wilson_ci(300, 600)
+    assert hi2 - lo2 < hi - lo
+
+
 def test_gate_status_small_sample():
     s = _trade_stats([_trade(+100.0, +5.0)])
     rows = _gate_status(s, total_return_pct=1.39, max_dd_pct=-1.14)
     by_label = {r[0]: r for r in rows}
-    assert by_label["100+ closed trades"][1] is False
+    assert by_label["60+ closed trades"][1] is False
     assert by_label["positive total P&L"][1] is True
     # Win rate unjudgeable below 30 trades.
     win_row = [r for r in rows if "win rate" in r[0]][0]
@@ -92,14 +103,24 @@ def test_gate_status_judges_win_rate_at_30_trades():
     assert win_row[1] is True
 
 
-def test_gate_status_flags_bad_win_rate():
-    trades = [_trade(+10.0, +1.0)] * 10 + [_trade(-10.0, -1.0)] * 20  # 33.3%
+def test_gate_status_inconclusive_win_rate_passes():
+    # 33% at n=30: the Wilson CI reaches 51% — cannot yet rule out the
+    # 47-56% backtest band, so the criterion is not failed.
+    trades = [_trade(+10.0, +1.0)] * 10 + [_trade(-10.0, -1.0)] * 20
     rows = _gate_status(_trade_stats(trades), -5.0, -12.0)
     by_label = {r[0]: r for r in rows}
     win_row = [r for r in rows if "win rate" in r[0]][0]
-    assert win_row[1] is False
+    assert win_row[1] is True
     assert by_label["positive total P&L"][1] is False
     assert by_label["max drawdown < 10%"][1] is False
+
+
+def test_gate_status_flags_conclusively_bad_win_rate():
+    # 20% over 75 trades: CI tops out around 31% — conclusively below 47%.
+    trades = [_trade(+10.0, +1.0)] * 15 + [_trade(-10.0, -1.0)] * 60
+    rows = _gate_status(_trade_stats(trades), -5.0, -12.0)
+    win_row = [r for r in rows if "win rate" in r[0]][0]
+    assert win_row[1] is False
 
 
 def test_daily_rows_pnl_chain():

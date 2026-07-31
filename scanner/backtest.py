@@ -40,8 +40,13 @@ from .universe import fetch_ticker_list
 
 BACKTEST_DIR = PROJECT_ROOT / "backtest"
 TEST_RESULTS_DIR = PROJECT_ROOT / "test_results"
-BACKTEST_PERIOD = "3y"
+# 5y download, but multi-window still tests the last ~3 years: the extra
+# history exists so the 52-week highs/lows indicator is fully formed on
+# window 1's first day (with 3y it was degenerate for ~200 days, which the
+# old max() regime aggregation masked).
+BACKTEST_PERIOD = "5y"
 TEST_WINDOW_DAYS = 250  # last ~12 months of trading days
+MULTI_WINDOW_TEST_SPAN_DAYS = 756  # ~3 years of trading days across the 6 windows
 TOP_N = 20
 FORWARD_HORIZONS = [1, 3, 5, 10]
 WINSORIZE_LIMIT = 30  # cap returns at +/-30% to reduce outlier distortion
@@ -175,6 +180,10 @@ def run_multi_window_backtest():
     usable_start = lookback_buffer
     usable_end = len(all_dates) - max_fwd
     usable_dates = all_dates[usable_start:usable_end]
+    # Test only the trailing ~3 years — the earlier downloaded history is
+    # indicator warm-up, not test surface.
+    if len(usable_dates) > MULTI_WINDOW_TEST_SPAN_DAYS:
+        usable_dates = usable_dates[-MULTI_WINDOW_TEST_SPAN_DAYS:]
 
     # Split into 6 non-overlapping windows
     n_windows = 6
