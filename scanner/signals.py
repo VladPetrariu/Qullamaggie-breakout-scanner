@@ -1,11 +1,12 @@
-"""Trade signal generator (Phase 10, step 51).
+"""Trade signal generator (Phase 10, step 51; revised 2026-07-29).
 
 Converts the scanner's ranked watchlist into actionable trade signals:
 entry price (the breakout level), stop price (entry - 3 × ATR), and
-position size (1% account risk, capped at 20% account). Signals are
-gated to favorable-regime days only — exit-strategy backtest (step 53b)
-showed mixed/caution regimes have negative expectancy across every
-exit policy.
+position size (1% account risk × regime multiplier, capped at 20%
+account). Regime tiering per the corrected-regime analysis: favorable
+trades full size, mixed at half risk, caution/risk_off not at all.
+An ADR20 > 8% ceiling filters lottery-ticket volatility (that bucket
+wins 41.5% with a −4.9% median under the bot's exits).
 
 The signals are intended for downstream consumption by the Alpaca
 execution engine (step 52). This module never places orders itself.
@@ -27,12 +28,14 @@ from .config import (
     ATR_PERIOD,
     DEFAULT_ACCOUNT_EQUITY,
     ENTRY_BUFFER_PCT,
-    MAX_CONCURRENT_POSITIONS,
+    MAX_ADR20_PCT,
     MAX_ENTRY_OVERSHOOT_PCT,
     MAX_HOLD_DAYS,
     MAX_LEVEL_DISTANCE_PCT,
     MAX_POSITION_PCT,
+    MAX_SIGNALS_PER_DAY,
     MIN_STOP_DISTANCE_PCT,
+    REGIME_RISK_MULTIPLIERS,
     RISK_PER_TRADE_PCT,
     SCANS_DIR,
     SIGNAL_TRADABLE_REGIMES,
@@ -66,9 +69,13 @@ class Signal:
     regime: str
     level_type: str             # "ath", "multi_year", "52wk", "prior_resistance"
     sector: str
+    adr20: float | None         # avg daily range %, mean of (High/Low − 1) over 20 bars
+    risk_multiplier: float      # regime-tiered sizing (favorable 1.0, mixed 0.5)
 
     # Execution metadata
     max_hold_days: int
+    last_close_date: str        # session the last_close belongs to — the
+                                # simulator's split-detection basis anchor
     generated_at: str           # ISO timestamp
     notes: list[str] = field(default_factory=list)
 
@@ -94,6 +101,18 @@ def _wilder_atr(df: pd.DataFrame, period: int = ATR_PERIOD) -> float | None:
     return float(val) if pd.notna(val) and val > 0 else None
 
 
+def _adr20(df: pd.DataFrame) -> float | None:
+    """Average daily range %, mean of (High/Low − 1) × 100 over the last 20 bars."""
+    recent = df.tail(20)
+    if len(recent) < 20:
+        return None
+    ratio = (recent["High"] / recent["Low"] - 1) * 100
+    ratio = ratio.replace([np.inf, -np.inf], np.nan).dropna()
+    if ratio.empty:
+        return None
+    return float(ratio.mean())
+
+
 # ── Per-stock signal computation ─────────────────────────────────────────
 
 
@@ -103,6 +122,7 @@ def _build_signal(
     regime: str,
     account_equity: float,
     rank: int,
+    adr20: float | None = None,
 ) -> Signal | None:
     """Build a Signal from one ranked stock. Returns None if it should be skipped."""
     ticker = stock["ticker"]
@@ -140,8 +160,11 @@ def _build_signal(
         return None
     stop_distance_pct = stop_distance / limit_entry * 100
 
-    # Sizing: risk 1% of account / per-share risk; cap at 20% of account.
-    risk_dollars = account_equity * RISK_PER_TRADE_PCT
+    # Sizing: 1% account risk × regime multiplier (mixed trades at half
+    # size — negative-expectancy regimes get exposure cut, not zeroed) over
+    # per-share risk; cap at 20% of account.
+    risk_multiplier = REGIME_RISK_MULTIPLIERS.get(regime, 1.0)
+    risk_dollars = account_equity * RISK_PER_TRADE_PCT * risk_multiplier
     raw_shares = risk_dollars / stop_distance
     max_dollar_position = account_equity * MAX_POSITION_PCT
     max_shares_by_cap = max_dollar_position / limit_entry
@@ -178,7 +201,10 @@ def _build_signal(
         regime=regime,
         level_type=stock.get("level_type", "unknown"),
         sector=stock.get("sector", ""),
+        adr20=round(adr20, 2) if adr20 is not None else None,
+        risk_multiplier=risk_multiplier,
         max_hold_days=MAX_HOLD_DAYS,
+        last_close_date=df.index[-1].strftime("%Y-%m-%d"),
         generated_at=datetime.now().isoformat(timespec="seconds"),
         notes=notes,
     )
@@ -192,7 +218,8 @@ def generate_signals(
     regime: str,
     price_data: dict[str, pd.DataFrame],
     account_equity: float = DEFAULT_ACCOUNT_EQUITY,
-    max_signals: int = MAX_CONCURRENT_POSITIONS,
+    max_signals: int = MAX_SIGNALS_PER_DAY,
+    market_context: dict | None = None,
 ) -> tuple[list[Signal], dict]:
     """Generate trade signals from ranked watchlist.
 
@@ -201,13 +228,15 @@ def generate_signals(
     """
     summary: dict = {
         "regime": regime,
+        "risk_multiplier": REGIME_RISK_MULTIPLIERS.get(regime, 1.0),
+        "indicator_regimes": (market_context or {}).get("indicator_regimes"),
         "account_equity": account_equity,
         "tradable_regimes": list(SIGNAL_TRADABLE_REGIMES),
         "candidates_considered": 0,
         "candidates_skipped": 0,
         "skip_reasons": {
             "no_level": 0, "no_atr": 0, "extended": 0,
-            "level_too_far": 0, "size_zero": 0,
+            "level_too_far": 0, "adr_too_high": 0, "size_zero": 0,
         },
         "signals_issued": 0,
         "regime_gate_passed": regime in SIGNAL_TRADABLE_REGIMES,
@@ -251,9 +280,18 @@ def generate_signals(
             summary["candidates_skipped"] += 1
             summary["skip_reasons"]["level_too_far"] += 1
             continue
+        # Quick reject: lottery-ticket volatility. The ADR20 > 8% bucket wins
+        # 41.5% with a −4.9% median under the bot's exits; its raw-mean appeal
+        # is a handful of unrepeatable squeezes.
+        adr = _adr20(df)
+        if adr is not None and adr > MAX_ADR20_PCT:
+            summary["candidates_skipped"] += 1
+            summary["skip_reasons"]["adr_too_high"] += 1
+            continue
 
         sig = _build_signal(
-            stock, df, regime, account_equity, rank=stock.get("rank", len(signals) + 1)
+            stock, df, regime, account_equity,
+            rank=stock.get("rank", len(signals) + 1), adr20=adr,
         )
         if sig is None:
             summary["candidates_skipped"] += 1
@@ -296,10 +334,12 @@ def print_signals(signals: list[Signal], summary: dict) -> None:
     print("  " + "=" * 92)
     print("  TRADE SIGNALS")
     print("  " + "=" * 92)
+    mult = summary.get("risk_multiplier", 1.0)
     print(
         f"  Account equity: ${summary['account_equity']:,.0f}   "
-        f"Regime: {summary['regime']}   "
-        f"Risk per trade: {RISK_PER_TRADE_PCT * 100:.1f}%   "
+        f"Regime: {summary['regime']}"
+        + (f" (risk × {mult:g})" if mult != 1.0 else "")
+        + f"   Risk per trade: {RISK_PER_TRADE_PCT * mult * 100:.2g}%   "
         f"Stop: {STOP_ATR_MULTIPLIER:g}× ATR   "
         f"Max hold: {MAX_HOLD_DAYS}d"
     )
@@ -332,7 +372,7 @@ def print_signals(signals: list[Signal], summary: dict) -> None:
 
     print()
     print(
-        f"  Issued {summary['signals_issued']}/{MAX_CONCURRENT_POSITIONS} positions  "
+        f"  Issued {summary['signals_issued']}/{MAX_SIGNALS_PER_DAY} signals  "
         f"capital ${summary['total_capital_committed']:,.0f}  "
         f"total risk ${summary['total_risk']:,.0f} "
         f"({summary['total_risk'] / summary['account_equity'] * 100:.2f}% of account)"

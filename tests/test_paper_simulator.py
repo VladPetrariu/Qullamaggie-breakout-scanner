@@ -13,12 +13,14 @@ import pytest
 from scanner.paper_simulator import (
     _attempt_fill,
     _basis_factor,
-    _check_exit,
+    _check_stop,
     _earliest_active_date,
     _max_drawdown_pct,
+    _maybe_partial_fill,
     _rescale_order,
     _rescale_position,
     _size_position,
+    _update_trail,
     run_paper_simulator,
 )
 
@@ -144,32 +146,120 @@ def test_sizing_zero_when_stop_above_fill():
     assert shares == 0
 
 
+def test_sizing_regime_multiplier_halves_risk():
+    # Mixed regime: 0.5 × 1% risk = $125 over a $1 stop → 125 shares.
+    shares, risk = _size_position(25_000, 25_000, 10.0, 9.0, risk_multiplier=0.5)
+    assert shares == 125
+    assert risk == 125.0
+
+
 # ── Exit rules ───────────────────────────────────────────────────────────
 
 
 def test_stop_exit_at_stop_price():
-    exit_ = _check_exit(_position(stop=9.0), _bar(9.5, 9.6, 8.9, 9.2))
+    exit_ = _check_stop(_position(stop=9.0), _bar(9.5, 9.6, 8.9, 9.2))
     assert exit_ == (9.0, "stop")
 
 
 def test_gap_through_stop_exits_at_open():
-    exit_ = _check_exit(_position(stop=9.0), _bar(8.5, 8.8, 8.3, 8.6))
+    exit_ = _check_stop(_position(stop=9.0), _bar(8.5, 8.8, 8.3, 8.6))
     assert exit_ == (8.5, "stop_gap")
 
 
-def test_time_exit_at_close_on_final_day():
-    exit_ = _check_exit(_position(days_held=9, max_hold=10), _bar(10.5, 10.8, 10.4, 10.7))
-    assert exit_ == (10.7, "time")
-
-
-def test_stop_beats_time_exit_on_same_bar():
-    exit_ = _check_exit(_position(stop=9.0, days_held=9, max_hold=10), _bar(9.5, 9.6, 8.9, 9.2))
-    assert exit_ == (9.0, "stop")
-
-
-def test_no_exit_mid_hold():
-    exit_ = _check_exit(_position(days_held=3), _bar(10.5, 10.8, 10.4, 10.7))
+def test_no_stop_mid_hold():
+    exit_ = _check_stop(_position(days_held=3), _bar(10.5, 10.8, 10.4, 10.7))
     assert exit_ is None
+
+
+def test_trailed_stop_reports_trail_reason():
+    pos = _position(stop=10.5)
+    pos["initial_stop_price"] = 9.0  # trail lifted the stop above entry level
+    assert _check_stop(pos, _bar(10.8, 10.9, 10.4, 10.6)) == (10.5, "trail_stop")
+    assert _check_stop(pos, _bar(10.2, 10.4, 10.1, 10.3)) == (10.2, "trail_stop_gap")
+
+
+# ── Partial profit + trailing (partial3_trail3 exit policy) ─────────────
+
+
+def _partial_position(**kwargs):
+    pos = _position(**kwargs)
+    pos["initial_shares"] = pos["shares"]
+    pos["initial_cost"] = pos["shares"] * pos["fill_price"]
+    pos["initial_stop_price"] = pos["stop_price"]
+    pos["atr_value"] = 0.5
+    pos["partial_target"] = pos["fill_price"] + 3 * 0.5  # +3×ATR
+    pos["partial_taken"] = False
+    pos["highest_close"] = pos["fill_price"]
+    return pos
+
+
+def test_partial_fills_half_at_target():
+    state = {"cash": 0.0}
+    pos = _partial_position(fill=10.0, shares=100)  # target 11.5
+    _maybe_partial_fill(state, pos, _bar(11.0, 11.6, 10.9, 11.2), date(2026, 5, 5))
+    assert pos["partial_taken"] is True
+    assert pos["shares"] == 50
+    assert pos["partial_price"] == pytest.approx(11.5)
+    assert state["cash"] == pytest.approx(50 * 11.5)
+    assert pos["partial_pnl_dollars"] == pytest.approx(50 * 1.5)
+
+
+def test_partial_gap_open_fills_at_open():
+    state = {"cash": 0.0}
+    pos = _partial_position(fill=10.0, shares=100)
+    _maybe_partial_fill(state, pos, _bar(11.8, 12.0, 11.5, 11.9), date(2026, 5, 5))
+    assert pos["partial_price"] == pytest.approx(11.8)
+
+
+def test_partial_fires_only_once():
+    state = {"cash": 0.0}
+    pos = _partial_position(fill=10.0, shares=100)
+    bar = _bar(11.0, 11.6, 10.9, 11.2)
+    _maybe_partial_fill(state, pos, bar, date(2026, 5, 5))
+    _maybe_partial_fill(state, pos, bar, date(2026, 5, 6))
+    assert pos["shares"] == 50
+
+
+def test_no_partial_without_target():
+    # Orders from pre-2026-07-29 signal files carry no atr_value/target.
+    state = {"cash": 0.0}
+    pos = _position(fill=10.0, shares=100)
+    _maybe_partial_fill(state, pos, _bar(11.0, 12.0, 10.9, 11.9), date(2026, 5, 5))
+    assert pos["shares"] == 100
+    assert state["cash"] == 0.0
+
+
+def test_trail_arms_only_after_partial():
+    pos = _partial_position(fill=10.0, shares=100, stop=8.5)
+    _update_trail(pos, _bar(11.0, 11.4, 10.9, 11.3))
+    assert pos["stop_price"] == pytest.approx(8.5)  # not armed yet
+    pos["partial_taken"] = True
+    _update_trail(pos, _bar(11.5, 11.9, 11.4, 11.8))
+    # highest close 11.8 − 3×0.5 = 10.3
+    assert pos["stop_price"] == pytest.approx(10.3)
+
+
+def test_trail_never_lowers_stop():
+    pos = _partial_position(fill=10.0, shares=100, stop=8.5)
+    pos["partial_taken"] = True
+    pos["highest_close"] = 12.0
+    pos["stop_price"] = 10.5
+    _update_trail(pos, _bar(10.6, 10.8, 10.5, 10.6))  # close below highest
+    assert pos["stop_price"] == pytest.approx(10.5)
+
+
+def test_rescale_after_partial_keeps_record_identities():
+    # A split between the partial and the final exit must keep the trade
+    # record internally consistent: counts and prices move to the same
+    # basis while banked dollars stay invariant.
+    state = {"cash": 0.0}
+    pos = _partial_position(fill=100.0, shares=40, stop=85.0)
+    _maybe_partial_fill(state, pos, _bar(120.0, 135.0, 118.0, 130.0), date(2026, 5, 5))
+    banked = pos["partial_pnl_dollars"]
+    _rescale_position(pos, 2.0)  # 1:2 reverse split — prices double
+    assert pos["partial_shares"] * (pos["partial_price"] - pos["fill_price"]) == pytest.approx(banked)
+    assert pos["initial_shares"] * pos["fill_price"] == pytest.approx(pos["initial_cost"])
+    assert pos["shares"] <= pos["initial_shares"]
 
 
 # ── Activation timing (cutoff is 9:30 US/Eastern, not machine-local) ────
@@ -398,9 +488,9 @@ def test_rerun_is_idempotent(e2e_dirs):
     assert len(trades) == 1  # AAA traded once, not twice
 
 
-def test_slot_limit_blocks_sixth_position(e2e_dirs):
+def test_slot_limit_blocks_ninth_position(e2e_dirs):
     paper_dir, scans_dir = e2e_dirs
-    tickers = ["TK1", "TK2", "TK3", "TK4", "TK5", "TK6"]
+    tickers = [f"TK{i}" for i in range(1, 10)]  # 9 candidates, 8 slots
     _write_signals(
         scans_dir,
         [_sig(t, i + 1, 10.0, 9.0, 9.9) for i, t in enumerate(tickers)],
@@ -413,9 +503,9 @@ def test_slot_limit_blocks_sixth_position(e2e_dirs):
     # Stop before the 10-day time exit so positions stay open.
     state = _run(paper_dir, scans_dir, data, today=date(2026, 5, 6))
 
-    assert len(state["open_positions"]) == 5
+    assert len(state["open_positions"]) == 8
     skipped = [o for o in state["order_history"] if o["status"] == "skipped_no_slot"]
-    assert [o["ticker"] for o in skipped] == ["TK6"]  # lowest-ranked loses the slot
+    assert [o["ticker"] for o in skipped] == ["TK9"]  # lowest-ranked loses the slot
 
 
 def test_split_rescales_order_basis(e2e_dirs):
@@ -534,6 +624,174 @@ def test_late_discovered_older_file_does_not_supersede(e2e_dirs):
     superseded = [o for o in state["order_history"] if o["status"] == "superseded"]
     assert [o["signal_date"] for o in superseded] == ["2026-05-04"]
     assert state["open_positions"][0]["fill_price"] == pytest.approx(10.12)
+
+
+def test_e2e_partial_then_trail_stop(e2e_dirs):
+    """Full partial3_trail3 lifecycle: fill → 50% off at +3×ATR → trail
+    ratchets under the highest close → remainder stops out on the trail."""
+    paper_dir, scans_dir = e2e_dirs
+    sig = _sig("PPP", 1, 10.0, 8.5, 9.9)
+    sig["atr_value"] = 0.5
+    sig["risk_multiplier"] = 1.0
+    sig["last_close_date"] = "2026-05-01"
+    _write_signals(scans_dir, [sig])
+
+    ppp = [
+        ("2026-05-01", 9.8, 9.95, 9.7, 9.9),
+        ("2026-05-04", 9.9, 10.05, 9.85, 10.02),  # fills at 10.0; target 11.5
+        ("2026-05-05", 10.8, 11.6, 10.7, 11.4),   # partial at 11.5; trail → 9.9
+        ("2026-05-06", 11.2, 11.3, 10.9, 11.0),   # holds above trail
+        ("2026-05-07", 10.0, 10.1, 9.7, 9.8),     # low breaks 9.9 → trail_stop
+    ]
+    data = {
+        "SPY": _flat(["2026-05-01"] + MAY_DAYS, 500.0),
+        "PPP": _df(ppp + [(d, 9.8, 9.9, 9.7, 9.8) for d in MAY_DAYS[4:]]),
+    }
+    _run(paper_dir, scans_dir, data, today=date(2026, 5, 8))
+
+    trades = json.loads((paper_dir / "trades.json").read_text())
+    assert len(trades) == 1
+    t = trades[0]
+    # Sized at $250 risk / $1.50 stop distance = 166 shares.
+    assert t["shares"] == 166
+    assert t["partial_shares"] == 83
+    assert t["partial_price"] == pytest.approx(11.5)
+    assert t["partial_date"] == "2026-05-05"
+    assert t["remaining_shares"] == 83
+    assert t["exit_reason"] == "trail_stop"
+    assert t["exit_price"] == pytest.approx(9.9)  # 11.4 highest close − 3×0.5
+    # P&L: 83 × (11.5 − 10) + 83 × (9.9 − 10) = 124.5 − 8.3
+    assert t["pnl_dollars"] == pytest.approx(116.2)
+    assert t["pnl_pct"] == pytest.approx(116.2 / 1660 * 100, abs=0.01)
+    assert t["days_held"] == 3
+
+
+def test_e2e_trail_is_next_bar_effective(e2e_dirs):
+    """The bar that fills the partial must not be stopped by the trail level
+    its own close implies — the raise applies from the next bar."""
+    paper_dir, scans_dir = e2e_dirs
+    sig = _sig("NBR", 1, 10.0, 8.5, 9.9)
+    sig["atr_value"] = 0.5
+    sig["last_close_date"] = "2026-05-01"
+    _write_signals(scans_dir, [sig])
+
+    nbr = [
+        ("2026-05-04", 9.9, 10.05, 9.85, 10.02),  # fills at 10.0; target 11.5
+        # Partial fills at 11.5, then the bar collapses to close 11.9−… low
+        # 10.2: a same-bar trail (11.9 − 1.5 = 10.4) would stop this bar.
+        ("2026-05-05", 10.8, 11.9, 10.2, 11.9),
+        ("2026-05-06", 11.0, 11.2, 10.5, 10.6),   # low 10.5 > trail 10.4 → survives
+    ]
+    data = {
+        "SPY": _flat(MAY_DAYS, 500.0),
+        "NBR": _df(nbr + [(d, 10.6, 10.7, 10.5, 10.6) for d in MAY_DAYS[3:]]),
+    }
+    state = _run(paper_dir, scans_dir, data, today=date(2026, 5, 7))
+
+    # Still open: the position survived both the partial bar and the next.
+    assert len(state["open_positions"]) == 1
+    pos = state["open_positions"][0]
+    assert pos["partial_taken"] is True
+    assert pos["stop_price"] == pytest.approx(10.4)  # armed after the partial bar
+
+
+def test_e2e_open_above_target_partial_fills_before_stop(e2e_dirs):
+    """A blowup bar that opens above the partial target and later hits the
+    stop: the resting limit provably filled at the first print, so half
+    banks at the Open before the remainder stops out."""
+    paper_dir, scans_dir = e2e_dirs
+    sig = _sig("BLW", 1, 10.0, 8.5, 9.9)
+    sig["atr_value"] = 0.5
+    sig["last_close_date"] = "2026-05-01"
+    _write_signals(scans_dir, [sig])
+
+    blw = [
+        ("2026-05-01", 9.8, 9.95, 9.7, 9.9),
+        ("2026-05-04", 9.9, 10.05, 9.85, 10.02),  # fills at 10.0; target 11.5
+        ("2026-05-05", 12.0, 12.1, 8.4, 9.0),     # opens 12.0, collapses through 8.5
+    ]
+    data = {
+        "SPY": _flat(["2026-05-01"] + MAY_DAYS, 500.0),
+        "BLW": _df(blw + [(d, 9.0, 9.1, 8.9, 9.0) for d in MAY_DAYS[2:]]),
+    }
+    _run(paper_dir, scans_dir, data, today=date(2026, 5, 6))
+
+    trades = json.loads((paper_dir / "trades.json").read_text())
+    assert len(trades) == 1
+    t = trades[0]
+    assert t["partial_shares"] == 83
+    assert t["partial_price"] == pytest.approx(12.0)  # filled at the Open
+    assert t["exit_reason"] == "stop"
+    assert t["exit_price"] == pytest.approx(8.5)
+    # 83 × (12 − 10) − 83 × (10 − 8.5) = 166 − 124.5
+    assert t["pnl_dollars"] == pytest.approx(41.5)
+
+
+def test_e2e_split_cashout_keeps_true_pnl(e2e_dirs):
+    """An odd-lot reverse split across runs settles the position to cash —
+    the trade record must carry the position's real P&L, not zeros."""
+    paper_dir, scans_dir = e2e_dirs
+    _write_signals(scans_dir, [_sig("RSP", 1, 10.0, 1.0, 9.9)])
+    rsp_run1 = [("2026-05-04", 9.9, 10.05, 9.85, 10.0), ("2026-05-05", 11.0, 12.1, 10.9, 12.0)]
+    data1 = {"SPY": _flat(MAY_DAYS, 500.0), "RSP": _df(rsp_run1)}
+    state = _run(paper_dir, scans_dir, data1, today=date(2026, 5, 6))
+    assert state["open_positions"][0]["shares"] == 27  # $250 risk / $9 stop distance
+    cash_before = state["cash"]
+
+    # Second run: 1:40 reverse split — adjusted history shows prices ×40;
+    # 27 shares become 0.675 → all cash-in-lieu.
+    rsp_run2 = [(d, o * 40, h * 40, l * 40, c * 40) for d, o, h, l, c in rsp_run1]
+    data2 = {"SPY": _flat(MAY_DAYS, 500.0), "RSP": _df(rsp_run2)}
+    state = _run(paper_dir, scans_dir, data2, today=date(2026, 5, 7))
+
+    trades = json.loads((paper_dir / "trades.json").read_text())
+    assert len(trades) == 1
+    t = trades[0]
+    assert t["exit_reason"] == "split_cashout"
+    assert t["pnl_dollars"] == pytest.approx(27 * 2.0)   # marked at 12 vs 10 fill
+    assert t["pnl_pct"] == pytest.approx(20.0)
+    assert state["cash"] == pytest.approx(cash_before + 27 * 12.0)
+
+
+def test_e2e_signal_risk_multiplier_halves_size(e2e_dirs):
+    paper_dir, scans_dir = e2e_dirs
+    sig = _sig("MXD", 1, 10.0, 9.0, 9.9)
+    sig["risk_multiplier"] = 0.5
+    _write_signals(scans_dir, [sig])
+    data = {
+        "SPY": _flat(MAY_DAYS, 500.0),
+        "MXD": _df([(d, 9.9, 10.1, 9.8, 10.0) for d in MAY_DAYS]),
+    }
+    state = _run(paper_dir, scans_dir, data, today=date(2026, 5, 6))
+    assert state["open_positions"][0]["shares"] == 125  # $125 risk / $1 stop
+
+
+def test_last_close_date_prevents_bogus_split_rescale(e2e_dirs):
+    """Regression for the JBL misfire: a post-open scan activates next day;
+    its last_close belongs to an older session, and a big down day in
+    between must NOT be read as a split that rewrites the order's levels."""
+    paper_dir, scans_dir = e2e_dirs
+    sig = _sig("JBL", 1, 20.2, 18.0, 20.0)
+    sig["generated_at"] = "2026-05-04T11:00:00"  # post-open → activates 05-05
+    sig["last_close_date"] = "2026-05-01"        # last completed session at scan time
+    _write_signals(scans_dir, [sig], "2026-05-04")
+
+    jbl = [
+        ("2026-05-01", 19.9, 20.1, 19.8, 20.0),
+        ("2026-05-04", 19.5, 19.6, 18.2, 18.4),  # −8% day (not a split)
+        ("2026-05-05", 18.5, 19.0, 18.3, 18.8),  # would fill a bogusly rescaled limit
+    ]
+    data = {
+        "SPY": _flat(["2026-05-01"] + MAY_DAYS, 500.0),
+        "JBL": _df(jbl + [(d, 18.8, 18.9, 18.7, 18.8) for d in MAY_DAYS[2:]]),
+    }
+    state = _run(paper_dir, scans_dir, data, today=date(2026, 5, 6))
+
+    # The old activation−1 inference read 18.4/20.0 as a ×0.92 split, cut the
+    # limit to ~18.6, and filled. With the anchor the limit stays 20.2.
+    history = {o["ticker"]: o["status"] for o in state["order_history"]}
+    assert history["JBL"] == "not_triggered"
+    assert state["open_positions"] == []
 
 
 def test_friday_postclose_superseded_by_monday_premarket(e2e_dirs):

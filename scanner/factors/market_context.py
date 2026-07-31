@@ -48,21 +48,13 @@ def compute_market_context(
         vix_level, MARKET_CONTEXT_THRESHOLDS["vix_level"]
     )
 
-    # Overall regime = most bearish indicator (conservative)
+    # Overall regime = most bearish indicator (conservative). min() over the
+    # regime order — a single deteriorating indicator caps the whole regime,
+    # which also subsumes the old VIX-risk_off and majority-bearish overrides.
+    # (Until 2026-07-29 this was max() — the most BULLISH indicator — which
+    # labeled every live trading day "favorable"; only 38% actually were.)
     regime_order = ["risk_off", "caution", "mixed", "favorable"]
-    regime = max(
-        regime_order.index(r) for r in ind.values()
-    )
-    overall = regime_order[regime]
-
-    # Override: if VIX is risk_off, overall is risk_off
-    if ind["vix_level"] == "risk_off":
-        overall = "risk_off"
-
-    # Override: if majority are caution or worse, don't allow favorable
-    bearish_count = sum(1 for r in ind.values() if r in ("caution", "risk_off"))
-    if bearish_count >= 2 and overall == "favorable":
-        overall = "mixed"
+    overall = regime_order[min(regime_order.index(r) for r in ind.values())]
 
     return {
         "regime": overall,
@@ -107,6 +99,9 @@ def _highs_lows(universe, price_data):
         df = price_data.get(ticker)
         if df is None or len(df) < 200:
             continue
+        # Bound to 252 bars so "52-week" stays 52 weeks even when the caller
+        # (the backtest) passes multi-year history.
+        df = df.tail(252)
         last_close = df["Close"].iloc[-1]
         high_52 = df["High"].max()
         low_52 = df["Low"].min()
@@ -152,6 +147,8 @@ def _breakout_followthrough(universe, price_data):
         df = price_data.get(ticker)
         if df is None or len(df) < 200:
             continue
+        # Same 252-bar bound as _highs_lows (plus the 5-day offset).
+        df = df.tail(257)
         # Was the stock at a 52-week high 5 days ago?
         close_5d = df["Close"].iloc[-6]
         history_before = df.iloc[:-5]

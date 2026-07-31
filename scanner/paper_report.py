@@ -9,9 +9,10 @@ Run `--paper` first to bring the account up to date.
 from __future__ import annotations
 
 from collections import Counter
+from math import sqrt
 from pathlib import Path
 
-from .config import MAX_CONCURRENT_POSITIONS, PAPER_DIR
+from .config import MAX_OPEN_POSITIONS, PAPER_DIR
 from .paper_simulator import (
     _account_path,
     _load_account,
@@ -19,11 +20,15 @@ from .paper_simulator import (
     _max_drawdown_pct,
 )
 
-# Go-live gate (PLAN.md, Phase 10 step 57)
-GATE_MIN_TRADES = 100
+# Go-live gate (PLAN.md, Phase 10 step 57; restated 2026-07-29).
+# 100 trades was ~17 months away at the observed fill rate — unreachable as
+# a gate. 60 trades with a Wilson 95% CI on the win rate judges the same
+# question statistically instead of by point estimate: pass unless the CI
+# sits conclusively below the backtest band (above the band is fine).
+GATE_MIN_TRADES = 60
 GATE_WIN_RATE_RANGE = (47.0, 56.0)   # multi-window 5d backtest range
 GATE_MAX_DRAWDOWN_PCT = 10.0
-GATE_MIN_TRADES_FOR_WIN_RATE = 30    # below this, win rate is just noise
+GATE_MIN_TRADES_FOR_WIN_RATE = 30    # below this, even the CI is just noise
 
 SPARK_BLOCKS = "▁▂▃▄▅▆▇█"
 
@@ -87,6 +92,17 @@ def _funnel(order_history: list[dict], pending: list[dict]) -> dict:
     return funnel
 
 
+def _wilson_ci(wins: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """Wilson score 95% CI for a win rate, in percent."""
+    if n == 0:
+        return 0.0, 100.0
+    p = wins / n
+    denom = 1 + z * z / n
+    center = (p + z * z / (2 * n)) / denom
+    half = z * sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denom
+    return center * 100 - half * 100, center * 100 + half * 100
+
+
 def _gate_status(stats: dict, total_return_pct: float, max_dd_pct: float) -> list[tuple]:
     """Progress against the go-live gate. Each entry: (label, met, detail)
     where met is True / False / None (not enough data to judge)."""
@@ -104,15 +120,16 @@ def _gate_status(stats: dict, total_return_pct: float, max_dd_pct: float) -> lis
     lo, hi = GATE_WIN_RATE_RANGE
     if n >= GATE_MIN_TRADES_FOR_WIN_RATE:
         wr = stats["win_rate"]
+        ci_lo, ci_hi = _wilson_ci(stats["wins"], n)
         rows.append((
-            f"win rate within backtest range ({lo:.0f}-{hi:.0f}%)",
-            lo <= wr <= hi + 10,  # above range is fine; far below is the failure mode
-            f"{wr:.1f}% (n={n})",
+            f"win rate consistent with backtest ({lo:.0f}-{hi:.0f}%)",
+            ci_hi >= lo,  # fail only when the whole CI sits below the band
+            f"{wr:.1f}% [CI {ci_lo:.1f}-{ci_hi:.1f}] (n={n})",
         ))
     else:
         wr_txt = f"{stats['win_rate']:.1f}% " if n else ""
         rows.append((
-            f"win rate within backtest range ({lo:.0f}-{hi:.0f}%)",
+            f"win rate consistent with backtest ({lo:.0f}-{hi:.0f}%)",
             None,
             f"{wr_txt}(n={n} — need {GATE_MIN_TRADES_FOR_WIN_RATE}+ to judge)",
         ))
@@ -178,6 +195,12 @@ def print_full_report(*, paper_dir: Path = PAPER_DIR) -> None:
         (p["last_mark_close"] - p["fill_price"]) * p["shares"]
         for p in state["open_positions"]
     )
+    # Partials already banked on still-open positions are realized cash but
+    # appear in no closed trade yet — without them Realized + Unrealized
+    # stops reconciling with equity as soon as the first partial fills.
+    banked_partials = sum(
+        p.get("partial_pnl_dollars", 0.0) for p in state["open_positions"]
+    )
     market_value = sum(
         p["last_mark_close"] * p["shares"] for p in state["open_positions"]
     )
@@ -196,10 +219,15 @@ def print_full_report(*, paper_dir: Path = PAPER_DIR) -> None:
     print(
         f"  Equity ${equity:,.2f}  ({total_ret:+.2f}% total)   "
         f"Cash ${state['cash']:,.2f}   Positions ${market_value:,.2f} "
-        f"({len(state['open_positions'])}/{MAX_CONCURRENT_POSITIONS})"
+        f"({len(state['open_positions'])}/{MAX_OPEN_POSITIONS})"
+    )
+    realized = stats.get("realized_pnl", 0.0) + banked_partials
+    banked_note = (
+        f" (incl. ${banked_partials:+,.2f} banked partials on open positions)"
+        if banked_partials else ""
     )
     print(
-        f"  Realized P&L ${stats.get('realized_pnl', 0.0):+,.2f}   "
+        f"  Realized P&L ${realized:+,.2f}{banked_note}   "
         f"Unrealized ${unrealized:+,.2f}   "
         f"Max DD {max_dd:.2f}%   Current DD {current_dd:.2f}%"
     )

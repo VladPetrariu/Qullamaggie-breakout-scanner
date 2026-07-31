@@ -47,14 +47,16 @@ import pandas as pd
 
 from .config import (
     DEFAULT_ACCOUNT_EQUITY,
-    MAX_CONCURRENT_POSITIONS,
     MAX_ENTRY_OVERSHOOT_PCT,
+    MAX_OPEN_POSITIONS,
     MAX_POSITION_PCT,
     PAPER_DIR,
     PAPER_SPLIT_TOLERANCE_PCT,
     PAPER_STALE_DATA_FORCE_CLOSE_DAYS,
+    PARTIAL_PROFIT_ATR,
     RISK_PER_TRADE_PCT,
     SCANS_DIR,
+    TRAIL_STOP_ATR,
 )
 
 ET = ZoneInfo("America/New_York")
@@ -213,6 +215,7 @@ def _collect_new_orders(scans_dir: Path, state: dict) -> list[dict]:
                     "detail": "signal file discovered after its trade day was already simulated",
                 })
                 continue
+            atr_value = sig.get("atr_value")
             file_orders.append({
                 "ticker": sig["ticker"],
                 "rank": sig.get("rank", 99),
@@ -223,6 +226,15 @@ def _collect_new_orders(scans_dir: Path, state: dict) -> list[dict]:
                 "stop_price": float(sig["stop_price"]),
                 "signal_last_close": float(sig["last_close"]),
                 "max_hold_days": int(sig.get("max_hold_days", 10)),
+                # Orders already resident in account.json from pre-v6 runs
+                # lack these keys and keep the old exit behavior. NOTE:
+                # signal FILES have carried atr_value since step 51, so a
+                # from-scratch replay of historical files applies the
+                # CURRENT policy — replay-vs-live comparisons must account
+                # for the exit-policy change, not just data revisions.
+                "atr_value": float(atr_value) if atr_value else None,
+                "risk_multiplier": float(sig.get("risk_multiplier", 1.0)),
+                "last_close_date": sig.get("last_close_date"),
             })
 
         # A newer signal supersedes a still-pending order for the same
@@ -329,6 +341,8 @@ def _rescale_order(order: dict, factor: float) -> None:
     order["limit_entry"] = round(order["limit_entry"] * factor, 4)
     order["stop_price"] = round(order["stop_price"] * factor, 4)
     order["signal_last_close"] = round(order["signal_last_close"] * factor, 4)
+    if order.get("atr_value"):
+        order["atr_value"] = round(order["atr_value"] * factor, 6)
 
 
 def _rescale_position(pos: dict, factor: float) -> float:
@@ -344,6 +358,19 @@ def _rescale_position(pos: dict, factor: float) -> float:
     pos["fill_price"] = round(pos["fill_price"] * factor, 4)
     pos["stop_price"] = round(pos["stop_price"] * factor, 4)
     pos["last_mark_close"] = round(new_mark, 4)
+    # Price-denominated exit state moves to the new basis too. Realized
+    # dollar amounts (partial_pnl_dollars, initial_cost) stay invariant.
+    for key in ("initial_stop_price", "partial_target", "highest_close", "partial_price"):
+        if pos.get(key):
+            pos[key] = round(pos[key] * factor, 4)
+    if pos.get("atr_value"):
+        pos["atr_value"] = round(pos["atr_value"] * factor, 6)
+    # Share-count bookkeeping follows the same basis so the trade record
+    # stays internally consistent (partial_shares × price deltas must keep
+    # matching the banked dollars; may be fractional after a split).
+    for key in ("initial_shares", "partial_shares"):
+        if pos.get(key):
+            pos[key] = round(pos[key] / factor, 4)
     return cash_in_lieu
 
 
@@ -368,14 +395,19 @@ def _attempt_fill(order: dict, bar: pd.Series) -> tuple[float | None, str]:
 
 
 def _size_position(
-    equity: float, cash: float, fill_price: float, stop_price: float
+    equity: float,
+    cash: float,
+    fill_price: float,
+    stop_price: float,
+    risk_multiplier: float = 1.0,
 ) -> tuple[int, float]:
-    """Shares for a new position: 1% equity risk over the stop distance,
+    """Shares for a new position: 1% equity risk × the signal's regime
+    multiplier (mixed regime trades at half risk) over the stop distance,
     capped at 20% of equity and at available cash. Returns (shares, risk$)."""
     stop_distance = fill_price - stop_price
     if stop_distance <= 0 or fill_price <= 0:
         return 0, 0.0
-    risk_dollars = equity * RISK_PER_TRADE_PCT
+    risk_dollars = equity * RISK_PER_TRADE_PCT * risk_multiplier
     by_risk = risk_dollars / stop_distance
     by_cap = equity * MAX_POSITION_PCT / fill_price
     by_cash = cash / fill_price
@@ -383,22 +415,60 @@ def _size_position(
     return max(shares, 0), round(risk_dollars, 2)
 
 
-def _check_exit(pos: dict, bar: pd.Series) -> tuple[float, str] | None:
-    """Exit decision for one open position against one daily bar (a bar
-    *after* the fill day — same-day stops are handled at fill time).
-    Stop first, then time exit at the close. Returns (exit_price, reason)."""
+def _check_stop(pos: dict, bar: pd.Series) -> tuple[float, str] | None:
+    """Stop decision for one open position against one daily bar (a bar
+    *after* the fill day — same-day stops are handled at fill time). A stop
+    the trail has lifted above its initial level reports as trail_stop so
+    the trade log shows which rule fired. Returns (exit_price, reason)."""
     open_ = float(bar["Open"])
     low = float(bar["Low"])
-    close = float(bar["Close"])
     stop = pos["stop_price"]
+    trailed = stop > pos.get("initial_stop_price", stop)
 
     if open_ <= stop:
-        return open_, "stop_gap"
+        return open_, ("trail_stop_gap" if trailed else "stop_gap")
     if low <= stop:
-        return stop, "stop"
-    if pos["days_held"] + 1 >= pos["max_hold_days"]:
-        return close, "time"
+        return stop, ("trail_stop" if trailed else "stop")
     return None
+
+
+def _maybe_partial_fill(state: dict, pos: dict, bar: pd.Series, day: dt_date) -> None:
+    """Resting limit that sells half at fill + PARTIAL_PROFIT_ATR × ATR.
+    Fires at most once; a gap open above the target fills at the Open.
+    Positions from pre-2026-07-29 signals carry no target and never fire."""
+    target = pos.get("partial_target")
+    if target is None or pos.get("partial_taken"):
+        return
+    open_, high = float(bar["Open"]), float(bar["High"])
+    if high < target:
+        return
+    pos["partial_taken"] = True
+    sell = pos["shares"] // 2
+    if sell <= 0:
+        return  # 1-share position: nothing to peel off, but the trail still arms
+    price = open_ if open_ >= target else target
+    state["cash"] += sell * price
+    pos["shares"] -= sell
+    pos["partial_shares"] = sell
+    pos["partial_price"] = round(price, 4)
+    pos["partial_date"] = day.isoformat()
+    pos["partial_pnl_dollars"] = round(sell * (price - pos["fill_price"]), 2)
+
+
+def _update_trail(pos: dict, bar: pd.Series) -> None:
+    """End-of-bar state: track the highest close; once the partial has
+    banked, ratchet the stop to highest close − TRAIL_STOP_ATR × ATR. Runs
+    after the bar's exit checks, so a raise applies from the next bar
+    (next-bar effective — the same convention the exit-variant backtest
+    validated; same-bar application overstated trailing by ~0.5pp)."""
+    close = float(bar["Close"])
+    pos["highest_close"] = max(pos.get("highest_close", close), close)
+    atr = pos.get("atr_value")
+    if not pos.get("partial_taken") or not atr:
+        return
+    candidate = pos["highest_close"] - TRAIL_STOP_ATR * atr
+    if candidate > pos["stop_price"]:
+        pos["stop_price"] = round(candidate, 4)
 
 
 # ── Engine ───────────────────────────────────────────────────────────────
@@ -425,7 +495,10 @@ def _close_position(
     reason: str,
 ) -> None:
     proceeds = pos["shares"] * exit_price
-    pnl = proceeds - pos["shares"] * pos["fill_price"]
+    # Total trade P&L = the remainder's exit plus whatever the partial
+    # already banked; pnl_pct is the blended return on the full entry cost.
+    pnl = proceeds - pos["shares"] * pos["fill_price"] + pos.get("partial_pnl_dollars", 0.0)
+    initial_cost = pos.get("initial_cost", pos["shares"] * pos["fill_price"])
     state["cash"] += proceeds
     trades.append({
         "ticker": pos["ticker"],
@@ -436,11 +509,15 @@ def _close_position(
         "exit_date": day.isoformat(),
         "fill_price": round(pos["fill_price"], 4),
         "exit_price": round(exit_price, 4),
-        "shares": pos["shares"],
+        "shares": pos.get("initial_shares", pos["shares"]),
+        "remaining_shares": pos["shares"],
+        "partial_shares": pos.get("partial_shares", 0),
+        "partial_price": pos.get("partial_price"),
+        "partial_date": pos.get("partial_date"),
         "stop_price": round(pos["stop_price"], 4),
         "risk_dollars": pos["risk_dollars"],
         "pnl_dollars": round(pnl, 2),
-        "pnl_pct": round((exit_price / pos["fill_price"] - 1) * 100, 3),
+        "pnl_pct": round(pnl / initial_cost * 100, 3) if initial_cost > 0 else 0.0,
         "days_held": pos["days_held"],
         "exit_reason": reason,
         "mae_pct": round(pos["mae_pct"], 3),
@@ -486,16 +563,29 @@ def _process_day(
         bar = df.loc[ts]
         pos["missing_days"] = 0
 
-        exit_decision = _check_exit(pos, bar)
+        # A bar that OPENS at/above the partial target provably fills the
+        # resting limit at the first print, before any later stop touch —
+        # the Open is the one intraday price whose ordering daily bars do
+        # establish. Otherwise: stop first (conservative same-bar ordering —
+        # a bar spanning both levels exits everything at the stop), then the
+        # partial, then the time exit at the close (the partial can still
+        # bank on the final day's bar).
+        if (
+            pos.get("partial_target") is not None
+            and not pos.get("partial_taken")
+            and float(bar["Open"]) >= pos["partial_target"]
+        ):
+            _maybe_partial_fill(state, pos, bar, day)
+        exit_decision = _check_stop(pos, bar)
         # Excursion stats must not include price action after the exit: a
         # gap-stop dies at the Open, and a stop exit's worst experienced
         # price is the stop itself (the bar's high may have printed after).
         ref_low, ref_high = float(bar["Low"]), float(bar["High"])
         if exit_decision is not None:
             price, reason = exit_decision
-            if reason == "stop_gap":
+            if reason.endswith("_gap"):
                 ref_low = ref_high = float(bar["Open"])
-            elif reason == "stop":
+            else:
                 ref_low, ref_high = price, None
         pos["mae_pct"] = min(pos["mae_pct"], (ref_low / pos["fill_price"] - 1) * 100)
         if ref_high is not None:
@@ -504,11 +594,17 @@ def _process_day(
             )
 
         pos["days_held"] += 1
+        if exit_decision is None:
+            _maybe_partial_fill(state, pos, bar, day)
+            if pos["days_held"] >= pos["max_hold_days"]:
+                exit_decision = (float(bar["Close"]), "time")
         if exit_decision is not None:
+            price, reason = exit_decision
             _close_position(state, trades, pos, day, price, reason)
         else:
             pos["last_mark_close"] = float(bar["Close"])
             pos["last_mark_date"] = day.isoformat()
+            _update_trail(pos, bar)
 
     # 2. Entries — orders whose activation date has arrived run once, in
     # rank order, then leave the book whatever the outcome.
@@ -547,11 +643,17 @@ def _process_day(
             continue
 
         # Rescale if downloaded (split-adjusted) history disagrees with the
-        # price basis the signal was generated from. The signal's last_close
-        # belongs to the last completed session before activation — for a
-        # pre-market scan that's the day before the file date, for a
-        # post-close scan it's the file date itself.
-        basis_day = dt_date.fromisoformat(order["activation_date"]) - timedelta(days=1)
+        # price basis the signal was generated from. Signals record which
+        # session their last_close belongs to; older files fall back to
+        # inferring it as the day before activation — wrong for a signal
+        # whose activation slipped a day past the 9:30 ET cutoff, where a
+        # big single-day move then reads as a split and silently rewrites
+        # the order's limit and stop (the JBL misfire).
+        lcd = order.get("last_close_date")
+        if lcd:
+            basis_day = dt_date.fromisoformat(lcd)
+        else:
+            basis_day = dt_date.fromisoformat(order["activation_date"]) - timedelta(days=1)
         factor = _basis_factor(
             order["signal_last_close"], _close_on_or_before(df, basis_day)
         )
@@ -561,7 +663,7 @@ def _process_day(
         if any(p["ticker"] == ticker for p in state["open_positions"]):
             _record_order(state, day, order, "skipped_already_holding")
             continue
-        if len(state["open_positions"]) >= MAX_CONCURRENT_POSITIONS:
+        if len(state["open_positions"]) >= MAX_OPEN_POSITIONS:
             _record_order(state, day, order, "skipped_no_slot")
             continue
 
@@ -571,13 +673,15 @@ def _process_day(
             continue
 
         shares, risk_dollars = _size_position(
-            equity_before, state["cash"], fill_price, order["stop_price"]
+            equity_before, state["cash"], fill_price, order["stop_price"],
+            order.get("risk_multiplier", 1.0),
         )
         if shares <= 0:
             _record_order(state, day, order, "skipped_insufficient_cash")
             continue
 
         state["cash"] -= shares * fill_price
+        atr = order.get("atr_value")
         pos = {
             "ticker": ticker,
             "rank": order["rank"],
@@ -586,10 +690,19 @@ def _process_day(
             "fill_date": day.isoformat(),
             "fill_price": fill_price,
             "shares": shares,
+            "initial_shares": shares,
+            "initial_cost": round(shares * fill_price, 2),
             "stop_price": order["stop_price"],
+            "initial_stop_price": order["stop_price"],
             "max_hold_days": order["max_hold_days"],
             "days_held": 0,
             "risk_dollars": risk_dollars,
+            # Exit policy (partial3_trail3): resting limit sells half at
+            # fill + 3×ATR; the remainder then trails highest close − 3×ATR.
+            "atr_value": atr,
+            "partial_target": round(fill_price + PARTIAL_PROFIT_ATR * atr, 4) if atr else None,
+            "partial_taken": False,
+            "highest_close": max(fill_price, float(bar["Close"])),
             "mae_pct": (float(bar["Low"]) / fill_price - 1) * 100,
             "mfe_pct": (float(bar["High"]) / fill_price - 1) * 100,
             "last_mark_close": float(bar["Close"]),
@@ -638,16 +751,25 @@ def _rescale_held_positions(
         fresh = _close_on_or_before(df, mark_date)
         factor = _basis_factor(pos["last_mark_close"], fresh)
         if factor is not None:
+            if int(math.floor(pos["shares"] / factor)) <= 0:
+                # Odd-lot reverse split: the whole position settles to cash.
+                # Close at the OLD basis (shares × mark = exactly the
+                # cash-in-lieu value) so the trade record keeps the true
+                # P&L instead of a zero-share, zero-P&L row.
+                print(
+                    f"  Note: {pos['ticker']} reverse split leaves no whole "
+                    f"shares — position cashed out"
+                )
+                _close_position(
+                    state, trades, pos, mark_date, pos["last_mark_close"],
+                    "split_cashout",
+                )
+                continue
             print(
                 f"  Note: {pos['ticker']} price basis shifted ×{factor:.4g} "
                 f"(split/adjustment) — position rescaled"
             )
             state["cash"] += _rescale_position(pos, factor)
-            if pos["shares"] <= 0:
-                _close_position(
-                    state, trades, pos, mark_date, pos["last_mark_close"],
-                    "split_cashout",
-                )
 
 
 # ── Public entry points ──────────────────────────────────────────────────
@@ -802,7 +924,7 @@ def _print_report(state: dict, trades: list[dict]) -> None:
     print(
         f"  Equity ${equity:,.2f} ({total_ret:+.2f}%)   "
         f"Cash ${state['cash']:,.2f}   "
-        f"Open {len(state['open_positions'])}/{MAX_CONCURRENT_POSITIONS}   "
+        f"Open {len(state['open_positions'])}/{MAX_OPEN_POSITIONS}   "
         f"Max DD {_max_drawdown_pct(state['equity_curve'], state['starting_equity']):.2f}%   "
         f"As of {as_of}"
     )

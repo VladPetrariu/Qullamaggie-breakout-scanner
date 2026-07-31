@@ -2,14 +2,23 @@
 
 import sys
 import time
+from datetime import date as dt_date
 
 from tqdm import tqdm
 
 from .cache import Cache
 from .charts import generate_charts_batch
-from .config import CACHE_DIR, DEFAULT_ACCOUNT_EQUITY, SCANS_DIR
+from .config import (
+    CACHE_DIR,
+    DEFAULT_ACCOUNT_EQUITY,
+    PREFLIGHT_MAX_ATTEMPTS,
+    PREFLIGHT_RETRY_WAIT_S,
+    SCANS_DIR,
+)
 from .dashboard import compute_deltas, generate_dashboard, load_prior_scan, open_dashboard, save_scan_json
 from .data import download_prices
+from .market_calendar import is_trading_day
+from .preflight import check_price_data, describe
 from .factors.breakout_level import compute_breakout_level
 from .factors.catalyst import compute_catalyst
 from .factors.consolidation import compute_consolidation
@@ -43,6 +52,13 @@ def main(
     print("  " + "=" * 40)
     print()
 
+    # The bot has scanned (and placed orders) on NYSE holidays before —
+    # yfinance happily returns garbage partial bars on them.
+    today = dt_date.today()
+    if not is_trading_day(today):
+        print(f"  {today} is not an NYSE session (weekend/holiday) — no scan, no signals.")
+        return
+
     cache = Cache(CACHE_DIR)
     SCANS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -62,6 +78,36 @@ def main(
     price_data = download_prices(raw_tickers, cache)
     print(f"  Received data for {len(price_data):,} tickers")
 
+    # ── 2.5. Preflight data gate ───────────────────────────────────
+    print()
+    print("[2.5/8] Verifying data integrity...")
+    result = check_price_data(price_data, today, universe=raw_tickers)
+    attempt = 1
+    while not result["ok"] and attempt < PREFLIGHT_MAX_ATTEMPTS:
+        attempt += 1
+        print(f"  Stale/incomplete download — {describe(result)}")
+        print(f"  Re-downloading (attempt {attempt}/{PREFLIGHT_MAX_ATTEMPTS}, "
+              f"waiting {PREFLIGHT_RETRY_WAIT_S}s)...")
+        time.sleep(PREFLIGHT_RETRY_WAIT_S)
+        price_data = download_prices(raw_tickers, cache, force=True)
+        result = check_price_data(price_data, today, universe=raw_tickers)
+    if not result["ok"]:
+        print(f"  ERROR: data still stale after {attempt} attempts — {describe(result)}")
+        print("  Refusing to emit signals from stale prices.")
+        # Only write the empty audit file when today has no signals yet — a
+        # failed midday re-run must not clobber the morning's good file (the
+        # simulator's regenerated-file logic would drop its pending orders).
+        todays_file = SCANS_DIR / f"signals_{today.isoformat()}.json"
+        if todays_file.exists():
+            print(f"  Keeping {todays_file.name} from an earlier successful run today.")
+        else:
+            empty_signals, summary = generate_signals(
+                [], "data_unavailable", price_data, account_equity
+            )
+            save_signals(empty_signals, summary)
+        sys.exit(2)
+    print(f"  OK — {describe(result)}")
+
     # ── 3. Filter ──────────────────────────────────────────────────
     print()
     print("[3/8] Filtering universe...")
@@ -78,7 +124,9 @@ def main(
         print()
         print("  Market is risk-off — suppressing all setups.")
         # Save an empty signals file so downstream bot logic always finds something
-        empty_signals, summary = generate_signals([], "risk_off", price_data, account_equity)
+        empty_signals, summary = generate_signals(
+            [], "risk_off", price_data, account_equity, market_context=ctx
+        )
         save_signals(empty_signals, summary)
         if print_signals_to_terminal:
             print_signals(empty_signals, summary)
@@ -250,7 +298,7 @@ def main(
 
     # Trade signals — always saved, printed only when --signals flag is set
     signals, sig_summary = generate_signals(
-        watchlist, ctx["regime"], price_data, account_equity
+        watchlist, ctx["regime"], price_data, account_equity, market_context=ctx
     )
     sig_path = save_signals(signals, sig_summary)
     print(f"  Signals: {sig_path} ({len(signals)} issued)")

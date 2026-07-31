@@ -8,9 +8,11 @@ from tqdm import tqdm
 
 from .cache import Cache
 from .config import (
+    BENCHMARK_FETCH_RETRIES,
     BENCHMARK_TICKERS,
     CACHE_PRICES_TTL_HOURS,
     DOWNLOAD_CHUNK_SIZE,
+    PREFLIGHT_BENCHMARKS,
     PRICE_HISTORY_PERIOD,
 )
 
@@ -21,6 +23,7 @@ def download_prices(
     *,
     period: str = PRICE_HISTORY_PERIOD,
     chunk_size: int = DOWNLOAD_CHUNK_SIZE,
+    force: bool = False,
 ) -> dict[str, pd.DataFrame]:
     """Download daily OHLCV for *tickers* + benchmarks.
 
@@ -29,16 +32,19 @@ def download_prices(
 
     Data is cached as a single parquet file keyed by today's date;
     subsequent calls on the same day return instantly from cache.
+    force=True skips the cache read and re-downloads (the preflight
+    gate uses this — a poisoned same-day cache can't heal itself).
     """
     today = pd.Timestamp.now().strftime("%Y-%m-%d")
     cache_key = f"prices_{today}"
     if period != PRICE_HISTORY_PERIOD:
         cache_key = f"prices_{period}_{today}"
 
-    cached_df = cache.get_df(cache_key, max_age_hours=CACHE_PRICES_TTL_HOURS)
-    if cached_df is not None:
-        print(f"  Using cached price data ({cache_key})")
-        return _long_to_dict(cached_df)
+    if not force:
+        cached_df = cache.get_df(cache_key, max_age_hours=CACHE_PRICES_TTL_HOURS)
+        if cached_df is not None:
+            print(f"  Using cached price data ({cache_key})")
+            return _long_to_dict(cached_df)
 
     # Merge benchmarks into the download list (deduped)
     all_tickers = sorted(set(tickers) | set(BENCHMARK_TICKERS))
@@ -60,10 +66,27 @@ def download_prices(
     if failed_chunks:
         print(f"  Warning: {failed_chunks}/{len(chunks)} batches returned no data")
 
+    # Benchmarks ride in their own small download with retries: the live era
+    # lost SPY from 17 of 35 daily files when it fell out of throttled
+    # 500-ticker batches, silently degrading regime and RS inputs.
+    bench = _download_benchmarks(period)
+    all_data.update(bench)
+
     if all_data:
         cache.set_df(cache_key, _dict_to_long(all_data))
 
     return all_data
+
+
+def _download_benchmarks(period: str) -> dict[str, pd.DataFrame]:
+    for attempt in range(1, BENCHMARK_FETCH_RETRIES + 1):
+        bench = _download_chunk(sorted(BENCHMARK_TICKERS), period)
+        if all(b in bench for b in PREFLIGHT_BENCHMARKS):
+            return bench
+        if attempt < BENCHMARK_FETCH_RETRIES:
+            print(f"  Benchmark download incomplete — retrying ({attempt}/{BENCHMARK_FETCH_RETRIES})")
+    print("  Warning: benchmark download incomplete after retries")
+    return bench
 
 
 # ---------------------------------------------------------------------------
