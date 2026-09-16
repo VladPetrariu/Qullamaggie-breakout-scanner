@@ -26,3 +26,4 @@ CLAUDE.md
 # OS / editor / agent state
 .DS_Store
 .claude/
+.aider*
