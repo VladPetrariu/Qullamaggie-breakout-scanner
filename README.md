@@ -318,7 +318,7 @@ Full results: [`test_results/2026-05-01_exit_strategies.md`](test_results/2026-0
   - Positions re-size against current account equity, so compounding stays honest
   - State persists in `paper_trades/` (account, trade log with MAE/MFE analytics, equity curve); re-runs are idempotent
 - ✅ **Daily automation + account reporting**: a launchd agent ([`scripts/`](scripts/)) runs the scan pre-market and the simulator after, every weekday, unattended — the Mac can even wake itself for it. `--paper-report` renders the full picture: trade statistics, signal funnel (issued → filled → expired), day-by-day equity curve, and live progress against the go-live gate.
-- 🔜 Steps 53-57: regime-adaptive risk engine, live tracker, feedback loop, go-live gate (100+ paper trades, positive P&L, max drawdown <10%).
+- 🔜 Steps 53-57: regime-adaptive risk engine, live tracker, feedback loop, go-live gate (60+ closed trades, positive total P&L, win rate consistent with the 47-56% backtest band via a Wilson 95% CI, max drawdown <10% — see [`GATE_*` constants](scanner/paper_report.py) for the exact criteria; [#10](https://github.com/VladPetrariu/Qullamaggie-breakout-scanner/issues/10) proposes judging it in R with a confidence interval instead of by P&L sign).
 
 **First replay** (5 signals from the 2026-05-02 scan, simulated against the five weeks of real market data that followed):
 
@@ -330,29 +330,31 @@ Full results: [`test_results/2026-05-01_exit_strategies.md`](test_results/2026-0
 | SILA | no fill | Never crossed the breakout level |
 | STX | no fill | Gapped past the entry — correctly not chased |
 
-Account: **+1.39% in 10 trading days of exposure, max drawdown -1.14%.** Five weeks of out-of-sample data, and the two design pillars both showed up: wide stops let winners breathe, and risk-based sizing kept the loser at exactly one risk unit.
+That first replay closed at **+1.39% in 10 trading days of exposure, max drawdown -1.14%** — three trades, and the two design pillars showed up: wide stops let winners breathe, and risk-based sizing kept the loser at exactly one risk unit.
 
-What `--paper-report` looks like as the trades accumulate (live snapshot, June 2026):
+**Where the live account actually stands (2026-09-15, after ~4.5 months):**
 
-```
-PAPER TRADING REPORT
-============================================================================================
-Inception 2026-05-04   As of 2026-06-10   Trading days 27
-Equity $25,347.76  (+1.39% total)   Cash $25,347.76   Positions $0.00 (0/5)
-Realized P&L $+347.76   Unrealized $+0.00   Max DD -1.14%   Current DD -1.14%
+| Live paper account, 2026-09-15 | |
+|---|---|
+| Equity | $24,603.85 (**−1.58%**), realized −$371, unrealized −$26 |
+| Closed trades | 41 — 20W/21L (48.8%), profit factor 0.86, expectancy −$9/trade |
+| Payoff | avg win +0.51R, avg loss −0.53R; only 2 wins > 1R, 8 losses at ≈ −1R |
+| Exits | 33 time (60.6% win, +$1,531), 8 stops (0% win, −$1,902) |
+| Max drawdown | −5.15% |
+| SPY, same span | +5.76% (the account's beta to SPY is 0.10) |
 
-TRADE STATISTICS
-Closed 3 (2W/1L, 66.7% win rate)   Expectancy $+115.92/trade   Profit factor 2.39
-Avg win $+298.84   Avg loss $-249.92   Avg hold 7.3d   Best WOLF +57.9%   Worst CC -12.5%
-Exits: stop 1, time 2   Avg MAE -10.0%   Avg MFE +36.2%
+These numbers are transcribed from the audit's account table; `python -m scanner --paper-report` regenerates this view locally.
 
-SIGNAL FUNNEL
-Signals 15   Filled 3 (60% of attempted)   Not triggered 1   Gapped past entry 1
-Superseded 3   Pending 7
+The first replay was a lucky small sample; 41 trades later the account is **−1.58%**, which is what a system with a ~+0.046R expectancy looks like at that sample size, not evidence the strategy is broken. The [2026-09-16 audit](test_results/2026-09-16_live_trade_audit.md) traces the flatness to four findings:
 
-DAILY EQUITY
-▁▂▁▁▂▃▂▄█▆▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅
-```
+1. **The payoff caps the edge.** A 3×ATR stop with a hard 10-day time exit makes the risk unit large and the winners time-capped — a 49-51% win rate produces ≈0.05R/trade. Detecting that edge at 2σ needs ~1,150 trades (~10.7 years at the current fill rate).
+2. **Sizing puts the most money in the least-breakout-prone names.** Risk-based sizing on a volatility-scaled stop makes position size ∝ 1/ATR (backtest corr −0.57 with ADR20). All five live positions over $3,500 lost (−$938); seven of eight under $1,500 won (+$979).
+3. **Seven weeks traded at full size in the wrong regime**, from a `max()` vs `min()` bug in the regime aggregator that labeled all 37 pre-2026-07-30 scan days "favorable". Since the fix the account is +$148 on 17 trades.
+4. **Wick entries are unconfirmed.** 51% of live fills closed below the entry price on the fill day; on 77 fills, those averaged −0.16R versus +0.15R for fills that closed above.
+
+The audit also lists what is *not* the problem (throughput, market beta, the trigger itself) and ranks the fixes: restructure the payoff and test it with the pool (#6), clean the universe and stop the dead-capital allocations (#4, #5), confirm the breakout before committing (#7), judge the go-live gate in R (#10), and tighten the data feed (#12). The go-live gate is unchanged from the `GATE_*` constants today — 60+ closed trades, positive total P&L, a win rate consistent with the 47-56% backtest band via a Wilson 95% CI, and max drawdown <10%.
+
+**What you can reproduce.** `paper_trades/` (the account, trade log, and equity curve) and `scans/` are gitignored personal state — the live snapshot above cannot be regenerated from a fresh clone. The *backtest* numbers in this README do reproduce: run `python -m scanner --backtest-multi` for the multi-window tables and `python -m scanner --exit-backtest` for the exit-strategy study, both from cached daily bars.
 
 **Phase 9 (deferred):** AI-enhanced analysis using Claude. Originally planned next, but reprioritized — its value is unverifiable at backtest scale (too expensive across 13,500 picks). Will revisit as an A/B filter on top of the running bot once we have ≥100 paper trades.
 
