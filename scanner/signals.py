@@ -237,6 +237,7 @@ def generate_signals(
         "skip_reasons": {
             "no_level": 0, "no_atr": 0, "extended": 0,
             "level_too_far": 0, "adr_too_high": 0, "size_zero": 0,
+            "not_equity": 0,
         },
         "signals_issued": 0,
         "regime_gate_passed": regime in SIGNAL_TRADABLE_REGIMES,
@@ -259,6 +260,13 @@ def generate_signals(
         if df is None or len(df) < ATR_PERIOD + 1:
             summary["candidates_skipped"] += 1
             summary["skip_reasons"]["no_atr"] += 1
+            continue
+
+         # Quick reject: fund/ETF that slipped past the universe-level name
+        # filter (backstop only — see universe.py _is_fund_name)
+        if stock.get("quote_type") not in (None, "EQUITY"):
+            summary["candidates_skipped"] += 1
+            summary["skip_reasons"]["not_equity"] += 1
             continue
 
         # Quick reject: missing breakout level

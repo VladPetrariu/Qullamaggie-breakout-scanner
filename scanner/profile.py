@@ -95,6 +95,7 @@ def _fetch_one(ticker: str) -> dict:
             "short_ratio": info.get("shortRatio"),
             "sector": info.get("sector"),
             "industry": info.get("industry"),
+            "quote_type": info.get("quoteType"),
             **earnings,
         }
     except Exception:

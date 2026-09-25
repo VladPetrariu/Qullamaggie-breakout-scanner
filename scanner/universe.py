@@ -8,6 +8,7 @@ import urllib.error
 from .cache import Cache
 from .config import (
     CACHE_UNIVERSE_TTL_HOURS,
+    FUND_NAME_KEYWORDS,
     MIN_AVG_VOLUME,
     MIN_PRICE,
     VOLUME_AVG_PERIOD,
@@ -24,7 +25,7 @@ def fetch_ticker_list(cache: Cache) -> list[str]:
     Uses SEC EDGAR's company_tickers_exchange.json which includes
     exchange information. Results cached for 7 days.
     """
-    cached = cache.get_json("ticker_list", max_age_hours=CACHE_UNIVERSE_TTL_HOURS)
+    cached = cache.get_json("ticker_list_v2", max_age_hours=CACHE_UNIVERSE_TTL_HOURS)
     if cached is not None:
         return cached
 
@@ -36,7 +37,7 @@ def fetch_ticker_list(cache: Cache) -> list[str]:
             "Failed to fetch any tickers. Check your internet connection."
         )
 
-    cache.set_json("ticker_list", result)
+    cache.set_json("ticker_list_v2", result)
     return result
 
 
@@ -96,6 +97,11 @@ def _is_common_stock_ticker(symbol: str) -> bool:
     """Heuristic: common stocks have 1-5 uppercase-letter tickers."""
     return bool(_TICKER_RE.match(symbol))
 
+def _is_fund_name(name: str) -> bool:
+    """True if the company name carries a fund/ETF/trust word."""
+    words = set(re.findall(r"[A-Z]+", name.upper()))
+    return bool(words & FUND_NAME_KEYWORDS)
+
 
 def _download_sec_data() -> list[list]:
     """Download SEC EDGAR company tickers with exchange info.
@@ -125,12 +131,16 @@ def _fetch_sec_tickers() -> set[str]:
     for row in rows:
         if len(row) < 4:
             continue
+        name = row[1]
         ticker = row[2]
         exchange = row[3]
         if exchange not in _TARGET_EXCHANGES:
             continue
-        if isinstance(ticker, str) and _is_common_stock_ticker(ticker):
-            tickers.add(ticker)
+        if not isinstance(ticker, str) or not _is_common_stock_ticker(ticker):
+            continue
+        if isinstance(name, str) and _is_fund_name(name):
+            continue
+        tickers.add(ticker)
     return tickers
 
 

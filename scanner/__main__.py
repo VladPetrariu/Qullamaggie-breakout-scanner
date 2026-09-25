@@ -198,6 +198,7 @@ def main(
         profile = profiles.get(stock["ticker"], {})
         stock["float_shares"] = profile.get("float_shares")
         stock["float_label"] = profile.get("float_label", "")
+        stock["quote_type"] = profile.get("quote_type")
         stock["short_pct_float"] = profile.get("short_pct_float")
         stock["short_ratio"] = profile.get("short_ratio")
         stock["sector"] = profile.get("sector", "")
