@@ -111,7 +111,7 @@ python -m scanner --signals --equity 50000  # Override default $25K account size
 python -m scanner --paper              # Paper trading — simulate fills for saved signals, track P&L
 python -m scanner --paper-status       # Quick view of the paper account
 python -m scanner --paper-report      # Full report: stats, signal funnel, go-live gate, daily equity
-python -m scanner --paper-reset       # Delete the paper account and start over
+python -m scanner --paper-reset       # Archive the paper account and start over (asks you to type "reset")
 python -m scanner --no-open            # Run the scan without opening the dashboard (for cron/launchd)
 ```
 

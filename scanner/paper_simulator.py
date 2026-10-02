@@ -879,19 +879,39 @@ def print_status(*, paper_dir: Path = PAPER_DIR) -> None:
     _print_report(state, trades)
 
 
-def reset_account(*, paper_dir: Path = PAPER_DIR) -> None:
-    """Delete the paper account and trade log."""
-    removed = []
-    for path in (_account_path(paper_dir), _trades_path(paper_dir)):
-        if path.exists():
-            path.unlink()
-            removed.append(path.name)
+def reset_account(*, paper_dir: Path = PAPER_DIR, confirm=input) -> Path | None:
+    """Archive the paper account and trade log so the next --paper run
+    starts fresh. Asks the user to type 'reset' first — the flag sits one
+    line from --paper-report in the README, and a mistyped reset once wiped
+    the live record. Files are moved to paper_trades/backups/, never deleted.
+    Returns the backup directory, or None if nothing was archived."""
+    paths = [p for p in (_account_path(paper_dir), _trades_path(paper_dir)) if p.exists()]
     print()
-    if removed:
-        print(f"  Paper account reset — deleted {', '.join(removed)}.")
-    else:
+    if not paths:
         print("  No paper account to reset.")
+        print()
+        return None
+
+    trades = _load_trades(paper_dir)
+    print(f"  This archives the paper account ({len(trades)} closed trades) and starts over.")
+    try:
+        answer = confirm("  Type 'reset' to confirm: ")
+    except EOFError:  # no terminal attached (e.g. automation) — never reset
+        print()
+        answer = ""
+    if answer.strip() != "reset":
+        print("  Cancelled — nothing changed.")
+        print()
+        return None
+
+    backup = paper_dir / "backups" / f"reset_{datetime.now():%Y-%m-%d_%H%M%S}"
+    backup.mkdir(parents=True)
+    for path in paths:
+        os.replace(path, backup / path.name)
+    print(f"  Paper account reset — moved {', '.join(p.name for p in paths)} to {backup}")
+    print("  To undo, move them back into paper_trades/.")
     print()
+    return backup
 
 
 # ── Reporting ────────────────────────────────────────────────────────────
