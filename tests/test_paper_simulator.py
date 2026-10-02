@@ -21,6 +21,7 @@ from scanner.paper_simulator import (
     _rescale_position,
     _size_position,
     _update_trail,
+    reset_account,
     run_paper_simulator,
 )
 
@@ -815,3 +816,47 @@ def test_friday_postclose_superseded_by_monday_premarket(e2e_dirs):
     assert len(filled) == 1
     assert filled[0]["signal_date"] == "2026-05-04"
     assert state["open_positions"][0]["fill_price"] == pytest.approx(10.0)
+
+
+# ── Reset safety ─────────────────────────────────────────────────────────
+
+
+def _seed_account(paper_dir):
+    paper_dir.mkdir(parents=True, exist_ok=True)
+    (paper_dir / "account.json").write_text('{"cash": 1}')
+    (paper_dir / "trades.json").write_text('[{"ticker": "X"}]')
+
+
+@pytest.mark.parametrize("answer", ["", "y", "yes", "RESET"])
+def test_reset_without_typed_confirmation_changes_nothing(tmp_path, answer):
+    _seed_account(tmp_path)
+    assert reset_account(paper_dir=tmp_path, confirm=lambda _: answer) is None
+    assert (tmp_path / "account.json").read_text() == '{"cash": 1}'
+    assert (tmp_path / "trades.json").exists()
+
+
+def test_reset_without_terminal_changes_nothing(tmp_path):
+    _seed_account(tmp_path)
+
+    def no_tty(_):
+        raise EOFError
+
+    assert reset_account(paper_dir=tmp_path, confirm=no_tty) is None
+    assert (tmp_path / "account.json").exists()
+
+
+def test_confirmed_reset_archives_instead_of_deleting(tmp_path):
+    _seed_account(tmp_path)
+    backup = reset_account(paper_dir=tmp_path, confirm=lambda _: "reset")
+    assert not (tmp_path / "account.json").exists()
+    assert not (tmp_path / "trades.json").exists()
+    assert (backup / "account.json").read_text() == '{"cash": 1}'
+    assert (backup / "trades.json").read_text() == '[{"ticker": "X"}]'
+    assert backup.parent == tmp_path / "backups"
+
+
+def test_reset_with_no_account_does_not_prompt(tmp_path):
+    def must_not_ask(_):
+        raise AssertionError("prompted with nothing to reset")
+
+    assert reset_account(paper_dir=tmp_path, confirm=must_not_ask) is None
