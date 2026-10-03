@@ -17,6 +17,15 @@ MIN_AVG_VOLUME = 500_000
 VOLUME_AVG_PERIOD = 20  # days used for avg-volume filter
 
 # ---------------------------------------------------------------------------
+# Non-equity name filter — SEC company names for ETFs, trusts, funds etc.
+# never contain these as whole words (case-insensitive). Backstop for
+# whatever slips through is the quote_type check in signals.py.
+# ---------------------------------------------------------------------------
+FUND_NAME_KEYWORDS = {
+    "ETF", "ETN", "FUND", "INDEX", "SHARES","PROSHARES",
+}
+
+# ---------------------------------------------------------------------------
 # Data download
 # ---------------------------------------------------------------------------
 PRICE_HISTORY_PERIOD = "1y"  # yfinance period string
