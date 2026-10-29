@@ -8,14 +8,17 @@ from scanner.paper_report import (
     _gate_status,
     _sparkline,
     _trade_stats,
+    _mean_ci_95,
+    _trades_needed_2sigma,
     _wilson_ci,
 )
 
 
-def _trade(pnl_dollars, pnl_pct, days=5, reason="time", mae=-2.0, mfe=4.0, ticker="TST"):
+def _trade(pnl_dollars, pnl_pct, days=5, reason="time", mae=-2.0, mfe=4.0, ticker="TST", risk_dollars=100.0):
     return {
         "ticker": ticker,
         "pnl_dollars": pnl_dollars,
+        "risk_dollars": risk_dollars,
         "pnl_pct": pnl_pct,
         "days_held": days,
         "exit_reason": reason,
@@ -36,6 +39,8 @@ def test_trade_stats_basic():
     ]
     s = _trade_stats(trades)
     assert s["n"] == 3
+    assert s["mean_r"] == pytest.approx((5.0 + 0.97 - 2.5) / 3)
+    assert s["r_n"] == 3
     assert s["wins"] == 2 and s["losses"] == 1
     assert s["win_rate"] == pytest.approx(66.667, abs=0.01)
     assert s["realized_pnl"] == pytest.approx(347.0)
@@ -89,7 +94,8 @@ def test_gate_status_small_sample():
     rows = _gate_status(s, total_return_pct=1.39, max_dd_pct=-1.14)
     by_label = {r[0]: r for r in rows}
     assert by_label["60+ closed trades"][1] is False
-    assert by_label["positive total P&L"][1] is True
+    assert by_label["lower 95% bound of mean R > 0"][1] is None
+    assert by_label["live mean R consistent with backtest"][1] is None
     # Win rate unjudgeable below 30 trades.
     win_row = [r for r in rows if "win rate" in r[0]][0]
     assert win_row[1] is None
@@ -111,7 +117,7 @@ def test_gate_status_inconclusive_win_rate_passes():
     by_label = {r[0]: r for r in rows}
     win_row = [r for r in rows if "win rate" in r[0]][0]
     assert win_row[1] is True
-    assert by_label["positive total P&L"][1] is False
+    assert by_label["lower 95% bound of mean R > 0"][1] is not True
     assert by_label["max drawdown < 10%"][1] is False
 
 
@@ -139,3 +145,40 @@ def test_sparkline_shape():
     line = _sparkline([0.0, 5.0, 10.0])
     assert line[0] == "▁" and line[-1] == "█"
     assert _sparkline([1.0]) == ""
+
+
+
+def test_mean_ci_uses_student_t_and_contains_mean():
+    values = [-0.5, 0.0, 0.5]
+    lo, hi = _mean_ci_95(values)
+    assert lo < 0.0 < hi
+    assert hi - lo == pytest.approx(2 * 4.303 * 0.5 / (3 ** 0.5))
+
+
+def test_mean_ci_requires_two_observations():
+    assert _mean_ci_95([]) is None
+    assert _mean_ci_95([0.25]) is None
+
+
+def test_trades_needed_2sigma():
+    assert _trades_needed_2sigma(0.68, 0.081) == 271
+    assert _trades_needed_2sigma(0.68, 0.0) is None
+
+
+def test_gate_status_positive_edge_requires_lower_ci_above_zero():
+    trades = [_trade(25, 1, risk_dollars=100)] * 80
+    stats = _trade_stats(trades)
+    rows = _gate_status(stats, 1.0, -2.0, 5.0)
+    by_label = {r[0]: r for r in rows}
+    assert by_label["lower 95% bound of mean R > 0"][1] is True
+    assert by_label["live mean R consistent with backtest"][1] is False
+    assert by_label["SPY return over matching period"][2] == "+5.00%"
+
+
+def test_trade_stats_missing_risk_does_not_invent_r():
+    trades = [_trade(100, 5), _trade(-20, -1, risk_dollars=None)]
+    stats = _trade_stats(trades)
+    assert stats["r_n"] == 1
+    assert stats["trades_missing_risk"] == 1
+    assert stats["mean_r"] == pytest.approx(1.0)
+    assert stats["mean_r_ci"] is None

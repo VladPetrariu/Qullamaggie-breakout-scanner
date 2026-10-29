@@ -318,7 +318,7 @@ Full results: [`test_results/2026-05-01_exit_strategies.md`](test_results/2026-0
   - Positions re-size against current account equity, so compounding stays honest
   - State persists in `paper_trades/` (account, trade log with MAE/MFE analytics, equity curve); re-runs are idempotent
 - ✅ **Daily automation + account reporting**: a launchd agent ([`scripts/`](scripts/)) runs the scan pre-market and the simulator after, every weekday, unattended — the Mac can even wake itself for it. `--paper-report` renders the full picture: trade statistics, signal funnel (issued → filled → expired), day-by-day equity curve, and live progress against the go-live gate.
-- 🔜 Steps 53-57: regime-adaptive risk engine, live tracker, feedback loop, go-live gate (100+ paper trades, positive P&L, max drawdown <10%).
+- 🔜 Steps 53-57: regime-adaptive risk engine, live tracker, feedback loop, and go-live evaluation. The paper report measures expectancy in R, requires the lower Student-t 95% confidence bound to exceed zero for evidence of a positive edge, checks whether the live interval contains the documented +0.081R backtest expectancy, estimates the approximate 2σ sample size, and compares SPY over the same dates when cached benchmark data is available. The 60-trade count, win-rate confidence interval, and max-drawdown <10% checks remain; missing risk data is reported rather than imputed.
 
 **First replay** (5 signals from the 2026-05-02 scan, simulated against the five weeks of real market data that followed):
 
