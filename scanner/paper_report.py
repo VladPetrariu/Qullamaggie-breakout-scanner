@@ -9,7 +9,7 @@ Run `--paper` first to bring the account up to date.
 from __future__ import annotations
 
 from collections import Counter
-from math import sqrt
+from math import ceil, sqrt
 from pathlib import Path
 
 from .config import MAX_OPEN_POSITIONS, PAPER_DIR
@@ -22,13 +22,19 @@ from .paper_simulator import (
 
 # Go-live gate (PLAN.md, Phase 10 step 57; restated 2026-07-29).
 # 100 trades was ~17 months away at the observed fill rate — unreachable as
-# a gate. 60 trades with a Wilson 95% CI on the win rate judges the same
-# question statistically instead of by point estimate: pass unless the CI
-# sits conclusively below the backtest band (above the band is fine).
+# a gate. 60 trades with 95% CIs judges each question statistically instead
+# of by point estimate: the backtest-consistency rows pass unless the CI sits
+# conclusively below the backtest (above it is fine). Positive total P&L was
+# dropped (issue #10): at the measured edge its sign at 60 trades is a coin
+# flip, so the edge row asks for the lower bound of mean R to clear zero.
 GATE_MIN_TRADES = 60
+# partial3_trail3 exit, top-5 favorable+mixed picks (2,661 over six windows):
+# test_results/2026-10-03_null_baseline.md. Re-derive when the exit changes.
+GATE_BACKTEST_EXPECTANCY_R = 0.081
 GATE_WIN_RATE_RANGE = (47.0, 56.0)   # multi-window 5d backtest range
 GATE_MAX_DRAWDOWN_PCT = 10.0
 GATE_MIN_TRADES_FOR_WIN_RATE = 30    # below this, even the CI is just noise
+GATE_Z_95 = 1.96
 
 SPARK_BLOCKS = "▁▂▃▄▅▆▇█"
 
@@ -50,7 +56,25 @@ def _trade_stats(trades: list[dict]) -> dict:
     best = max(trades, key=lambda t: t["pnl_pct"])
     worst = min(trades, key=lambda t: t["pnl_pct"])
 
+    # R = P&L over the dollars the sizer budgeted for the trade. Trades
+    # without valid risk_dollars are counted, never imputed — the CI (and
+    # every gate row built on it) needs R for every closed trade.
+    r_values = [
+        t["pnl_dollars"] / t["risk_dollars"]
+        for t in trades
+        if isinstance(t.get("risk_dollars"), (int, float)) and t["risk_dollars"] > 0
+    ]
+    r_n = len(r_values)
+    r_mean = sum(r_values) / r_n if r_n else None
+    r_std = _sample_std(r_values) if r_n > 1 else None
+    r_ci = _mean_ci_95(r_values) if r_n >= 2 and r_n == len(trades) else None
+
     stats.update({
+        "r_n": r_n,
+        "mean_r": r_mean,
+        "std_r": r_std,
+        "mean_r_ci": r_ci,
+        "trades_missing_risk": len(trades) - r_n,
         "wins": len(wins),
         "losses": len(losses),
         "win_rate": len(wins) / len(trades) * 100,
@@ -103,19 +127,100 @@ def _wilson_ci(wins: int, n: int, z: float = 1.96) -> tuple[float, float]:
     return center * 100 - half * 100, center * 100 + half * 100
 
 
-def _gate_status(stats: dict, total_return_pct: float, max_dd_pct: float) -> list[tuple]:
+def _t_critical_95(df: int) -> float:
+    """Two-sided 95% Student-t critical value: table through 30 df, then the
+    Cornish-Fisher expansion (within 0.0001 of exact). Falling back to the
+    normal 1.96 would narrow the CI 2-4% exactly where the gate is judged
+    (t = 2.001 at 59 df)."""
+    critical = {
+        1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571,
+        6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262, 10: 2.228,
+        11: 2.201, 12: 2.179, 13: 2.160, 14: 2.145, 15: 2.131,
+        16: 2.120, 17: 2.110, 18: 2.101, 19: 2.093, 20: 2.086,
+        21: 2.080, 22: 2.074, 23: 2.069, 24: 2.064, 25: 2.060,
+        26: 2.056, 27: 2.052, 28: 2.048, 29: 2.045, 30: 2.042,
+    }
+    if df in critical:
+        return critical[df]
+    z = 1.959964
+    return (
+        z
+        + (z**3 + z) / (4 * df)
+        + (5 * z**5 + 16 * z**3 + 3 * z) / (96 * df**2)
+    )
+
+
+def _sample_std(values: list[float]) -> float:
+    """Sample standard deviation (n − 1 denominator); needs 2+ values."""
+    mean = sum(values) / len(values)
+    return sqrt(sum((v - mean) ** 2 for v in values) / (len(values) - 1))
+
+
+def _mean_ci_95(values: list[float]) -> tuple[float, float] | None:
+    """Student-t 95% confidence interval for a sample mean."""
+    n = len(values)
+    if n < 2:
+        return None
+    mean = sum(values) / n
+    margin = _t_critical_95(n - 1) * _sample_std(values) / sqrt(n)
+    return mean - margin, mean + margin
+
+
+def _trades_needed_2sigma(std_r: float | None, mean_r: float | None) -> int | None:
+    """Approximate sample size needed to distinguish the observed mean from zero."""
+    if std_r is None or mean_r is None or abs(mean_r) < 1e-12:
+        return None
+    return max(1, ceil((GATE_Z_95 * std_r / abs(mean_r)) ** 2))
+
+
+def _gate_status(stats: dict, max_dd_pct: float) -> list[tuple]:
     """Progress against the go-live gate. Each entry: (label, met, detail)
-    where met is True / False / None (not enough data to judge)."""
-    n = stats.get("n", 0)
+    where met is True / False / None (not enough data to judge, or an
+    informational row)."""
+    n, r_n = stats.get("n", 0), stats.get("r_n", 0)
+    mean_r, std_r, ci = stats.get("mean_r"), stats.get("std_r"), stats.get("mean_r_ci")
     rows = [(
         f"{GATE_MIN_TRADES}+ closed trades",
         True if n >= GATE_MIN_TRADES else False,
         f"{n}/{GATE_MIN_TRADES}",
-    ), (
-        "positive total P&L",
-        total_return_pct > 0,
-        f"{total_return_pct:+.2f}%",
     )]
+
+    missing = stats.get("trades_missing_risk", 0)
+    no_ci = (
+        f"(R unavailable for {missing} trade(s) without risk_dollars)" if missing
+        else f"(n={n} — need 2+ to judge)"
+    )
+    if ci is not None:
+        ci_lo, ci_hi = ci
+        rows.append((
+            "lower 95% bound of mean R > 0",
+            ci_lo > 0,
+            f"mean {mean_r:+.3f}R (SE {std_r / sqrt(r_n):.3f}R) "
+            f"[CI {ci_lo:+.3f} to {ci_hi:+.3f}R] (n={r_n})",
+        ))
+    else:
+        rows.append(("lower 95% bound of mean R > 0", None, no_ci))
+
+    target = GATE_BACKTEST_EXPECTANCY_R
+    if ci is not None and n >= GATE_MIN_TRADES:
+        rows.append((
+            "live mean R consistent with backtest",
+            ci[1] >= target,  # fail only when the whole CI sits below the backtest
+            f"backtest {target:+.3f}R; live CI {ci[0]:+.3f} to {ci[1]:+.3f}R (n={r_n})",
+        ))
+    else:
+        why = no_ci if ci is None else f"(n={n} — need {GATE_MIN_TRADES}+ to judge)"
+        rows.append(("live mean R consistent with backtest", None, f"backtest {target:+.3f}R {why}"))
+
+    # Informational, never judged: how far the sample is from resolving the
+    # observed mean at 2σ. A mean at or below zero has no edge to resolve.
+    if ci is None:
+        sample_detail = no_ci
+    elif mean_r <= 0:
+        sample_detail = f"observed mean {mean_r:+.3f}R — no positive edge to resolve (n={r_n})"
+    else:
+        sample_detail = f"~{_trades_needed_2sigma(std_r, mean_r)} trades at observed mean/std (n={r_n})"
+    rows.append(("sample size to resolve observed edge at 2σ", None, sample_detail))
 
     lo, hi = GATE_WIN_RATE_RANGE
     if n >= GATE_MIN_TRADES_FOR_WIN_RATE:
@@ -275,7 +380,7 @@ def print_full_report(*, paper_dir: Path = PAPER_DIR) -> None:
 
     print()
     print("  GO-LIVE GATE  (Phase 10 criteria)")
-    for label, met, detail in _gate_status(stats, total_ret, max_dd):
+    for label, met, detail in _gate_status(stats, max_dd):
         mark = "✓" if met else ("·" if met is None else "✗")
         print(f"  [{mark}] {label:<46} {detail}")
 
