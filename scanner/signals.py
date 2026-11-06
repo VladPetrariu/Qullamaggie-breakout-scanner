@@ -237,7 +237,7 @@ def generate_signals(
         "skip_reasons": {
             "no_level": 0, "no_atr": 0, "extended": 0,
             "level_too_far": 0, "adr_too_high": 0, "size_zero": 0,
-            "not_equity": 0,
+            "not_equity": 0, "atr_too_low": 0,
         },
         "signals_issued": 0,
         "regime_gate_passed": regime in SIGNAL_TRADABLE_REGIMES,
@@ -298,6 +298,18 @@ def generate_signals(
         if adr is not None and adr > MAX_ADR20_PCT:
             summary["candidates_skipped"] += 1
             summary["skip_reasons"]["adr_too_high"] += 1
+            continue
+
+        # Quick reject: 3×ATR would hit the 3% stop floor. These
+        # unusually quiet names can otherwise receive oversized positions.
+        limit_entry = round(float(stock["level_value"]) * (1 + ENTRY_BUFFER_PCT / 100), 2)
+        atr = _wilder_atr(df)
+        if atr is not None and (
+            STOP_ATR_MULTIPLIER * atr / limit_entry * 100
+            < MIN_STOP_DISTANCE_PCT
+        ):
+            summary["candidates_skipped"] += 1
+            summary["skip_reasons"]["atr_too_low"] += 1
             continue
 
         sig = _build_signal(

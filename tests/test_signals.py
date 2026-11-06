@@ -3,12 +3,12 @@ import pandas as pd
 from scanner.signals import generate_signals
 
 
-def _fake_price_df(rows: int = 20) -> pd.DataFrame:
+def _fake_price_df(rows: int = 20, high: float = 10.5, low: float = 9.5) -> pd.DataFrame:
     """Enough rows to clear the ATR_PERIOD + 1 check."""
     return pd.DataFrame({
         "Open": [10.0] * rows,
-        "High": [10.5] * rows,
-        "Low": [9.5] * rows,
+        "High": [high] * rows,
+        "Low": [low] * rows,
         "Close": [10.0] * rows,
         "Volume": [100_000] * rows,
     })
@@ -65,3 +65,37 @@ def test_missing_quote_type_is_not_skipped_as_non_equity():
     )
 
     assert summary["skip_reasons"]["not_equity"] == 0
+
+
+
+def test_stop_floored_candidate_is_skipped_as_atr_too_low():
+    watchlist = [{
+        "ticker": "ATKR",
+        "quote_type": "EQUITY",
+        "level_value": 10.0,
+    }]
+    price_data = {"ATKR": _fake_price_df(high=10.01, low=9.99)}
+
+    signals, summary = generate_signals(
+        watchlist, regime="favorable", price_data=price_data,
+    )
+
+    assert signals == []
+    assert summary["skip_reasons"]["atr_too_low"] == 1
+    assert summary["skip_reasons"]["size_zero"] == 0
+
+
+def test_candidate_with_stop_wider_than_floor_is_not_skipped():
+    watchlist = [{
+        "ticker": "AAPL",
+        "quote_type": "EQUITY",
+        "level_value": 10.0,
+    }]
+    price_data = {"AAPL": _fake_price_df(high=10.15, low=9.85)}
+
+    signals, summary = generate_signals(
+        watchlist, regime="favorable", price_data=price_data,
+    )
+
+    assert len(signals) == 1
+    assert summary["skip_reasons"]["atr_too_low"] == 0
