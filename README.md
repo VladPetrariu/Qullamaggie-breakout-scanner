@@ -60,7 +60,7 @@ The problem is finding them. You'd have to look at thousands of charts every mor
 
 ## Features
 
-- **Full universe coverage** — fetches every NYSE/NASDAQ ticker from SEC EDGAR, filters to liquid names ($5+ price, 500K+ daily volume)
+- **Full-universe download** — fetches every NYSE/NASDAQ ticker from SEC EDGAR and removes funds (SEC name filter, Nasdaq Trader ETF flag, Yahoo quote-type backstop), then filters to liquid names ($5+ price, 500K+ daily volume). Coverage is not complete in practice: roughly a third of tickers fail to download on a typical run (#12)
 - **Market context gate** — breadth indicators, VIX, breakout follow-through rate; risk-off regime suppresses all output
 - **6 factor categories** computed per stock:
 
@@ -332,27 +332,11 @@ Full results: [`test_results/2026-05-01_exit_strategies.md`](test_results/2026-0
 
 Account: **+1.39% in 10 trading days of exposure, max drawdown -1.14%.** Five weeks of out-of-sample data, and the two design pillars both showed up: wide stops let winners breathe, and risk-based sizing kept the loser at exactly one risk unit.
 
-What `--paper-report` looks like as the trades accumulate (live snapshot, June 2026):
+**Current state of the account (2026-10-28):** -0.86% after 44 closed trades (22W / 22L), max drawdown -5.15%. Nothing traded from 2026-09-21 to 2026-10-27: every day was caution or risk-off, so the regime gate issued no signals. The first replay's +1.39% above was 10 trading days of exposure; since then the account has been roughly flat, which at n = 44 is what the backtest's per-trade edge (+0.081R against ~0.68R of per-trade noise) predicts — the sample is far too small to judge the edge either way.
 
-```
-PAPER TRADING REPORT
-============================================================================================
-Inception 2026-05-04   As of 2026-06-10   Trading days 27
-Equity $25,347.76  (+1.39% total)   Cash $25,347.76   Positions $0.00 (0/5)
-Realized P&L $+347.76   Unrealized $+0.00   Max DD -1.14%   Current DD -1.14%
+The [2026-09-16 profitability audit](test_results/2026-09-16_live_trade_audit.md) dug into why the bot is flat and found four things: (1) the payoff structure caps the edge at ~0.05R per trade — time exits give back most of the peak (+10.4% average MFE, +4.1% at exit) and the partial target is rarely reached; (2) the sizing formula puts the most money in the stocks least able to break out; (3) the bot spent seven weeks at full size in the wrong regime; and (4) entries take any intraday touch of the level, unconfirmed. It also cleared the usual suspects: slots/throughput, market beta (0.10) and — post-v6 — the data feed are not the problem.
 
-TRADE STATISTICS
-Closed 3 (2W/1L, 66.7% win rate)   Expectancy $+115.92/trade   Profit factor 2.39
-Avg win $+298.84   Avg loss $-249.92   Avg hold 7.3d   Best WOLF +57.9%   Worst CC -12.5%
-Exits: stop 1, time 2   Avg MAE -10.0%   Avg MFE +36.2%
-
-SIGNAL FUNNEL
-Signals 15   Filled 3 (60% of attempted)   Not triggered 1   Gapped past entry 1
-Superseded 3   Pending 7
-
-DAILY EQUITY
-▁▂▁▁▂▃▂▄█▆▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅
-```
+**What you can reproduce:** `paper_trades/` and `scans/` are gitignored personal state, so the live account above is not in this repo. The backtest numbers are reproducible: they come from `python -m scanner --backtest-multi` plus `--exit-backtest`, with summaries in [`test_results/`](test_results/).
 
 **Phase 9 (deferred):** AI-enhanced analysis using Claude. Originally planned next, but reprioritized — its value is unverifiable at backtest scale (too expensive across 13,500 picks). Will revisit as an A/B filter on top of the running bot once we have ≥100 paper trades.
 
