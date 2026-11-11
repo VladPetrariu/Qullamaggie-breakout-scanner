@@ -140,13 +140,29 @@ def test_preflight_fails_when_download_missing_half_the_universe():
 
 
 def test_preflight_completeness_passes_at_reasonable_fraction():
+    # The threshold is 0.9 since #12 (raised together with the download
+    # fix); 19 of 20 requested tickers clears it.
     data = {"SPY": _frame("2026-07-28"), "^VIX": _frame("2026-07-28")}
-    for i in range(14):
+    for i in range(19):
         data[f"TK{i}"] = _frame("2026-07-28")
     requested = [f"TK{i}" for i in range(20)]
     result = check_price_data(data, date(2026, 7, 29), universe=requested)
     assert result["ok"] is True
-    assert result["universe_fraction"] == pytest.approx(0.7)
+    assert result["universe_fraction"] == pytest.approx(0.95)
+    assert result["n_missing"] == 1
+
+
+def test_preflight_describe_surfaces_missing_ticker_count():
+    from scanner.preflight import describe
+
+    data = {"SPY": _frame("2026-07-28"), "^VIX": _frame("2026-07-28")}
+    for i in range(4):
+        data[f"TK{i}"] = _frame("2026-07-28")
+    requested = [f"TK{i}" for i in range(20)]
+    result = check_price_data(data, date(2026, 7, 29), universe=requested)
+    assert result["n_requested"] == 20
+    assert result["n_missing"] == 16
+    assert "16 of 20 requested tickers missing" in describe(result)
 
 
 def test_preflight_unscheduled_closure_falls_back_one_session():
