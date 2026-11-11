@@ -128,10 +128,15 @@ BENCHMARK_TICKERS = ["SPY", "^VIX"] + list(SECTOR_ETFS.values())
 # ---------------------------------------------------------------------------
 PREFLIGHT_BENCHMARKS = ("SPY", "^VIX")   # must carry the prior session's bar
 PREFLIGHT_MIN_COVERAGE_PCT = 90.0        # of downloaded universe with that bar
-PREFLIGHT_MIN_UNIVERSE_FRACTION = 0.5    # downloaded stock tickers / requested — catches
-                                         # throttling that drops whole 500-ticker chunks
-                                         # (clean days deliver ~65-77% of the EDGAR list;
-                                         # the catastrophic live days were under 43%)
+PREFLIGHT_MIN_UNIVERSE_FRACTION = 0.9    # downloaded stock tickers / requested — catches
+                                         # throttling that drops whole 500-ticker chunks.
+                                         # Raised from 0.5 together with the download fix
+                                         # (project-local yfinance tz cache + per-chunk
+                                         # retry, #12): with those in place a clean run
+                                         # should deliver ~98%+, so 0.9 separates fixed
+                                         # from broken. At the old 0.5, the everyday ~36%
+                                         # silent loss (2026-10-28: 4,542 of 7,102)
+                                         # passed the gate.
 PREFLIGHT_MAX_ATTEMPTS = 3               # total tries (1 initial + 2 re-downloads)
 PREFLIGHT_RETRY_WAIT_S = 300             # pause between re-downloads
 BENCHMARK_FETCH_RETRIES = 3              # dedicated small benchmark download

@@ -23,6 +23,7 @@ from .config import (
     CACHE_DIR,
     MIN_AVG_VOLUME,
     MIN_PRICE,
+    PREFLIGHT_MIN_UNIVERSE_FRACTION,
     PROJECT_ROOT,
     VOLUME_AVG_PERIOD,
 )
@@ -81,6 +82,20 @@ def _load_backtest_data() -> tuple[list[str], dict[str, pd.DataFrame]] | None:
     raw_tickers = fetch_ticker_list(cache)
     price_data = download_prices(raw_tickers, cache, period=BACKTEST_PERIOD)
     print(f"  Received data for {len(price_data):,} tickers")
+
+    # Same coverage check as the preflight gate (#12): the backtest shares
+    # the download path, so a throttled download would otherwise silently
+    # backtest about two-thirds of the universe.
+    if raw_tickers:
+        received = sum(1 for t in raw_tickers if t in price_data)
+        coverage = received / len(raw_tickers)
+        if coverage < PREFLIGHT_MIN_UNIVERSE_FRACTION:
+            print(
+                f"  WARNING: download holds only {received:,} of "
+                f"{len(raw_tickers):,} requested tickers ({coverage:.0%}), "
+                f"below the {PREFLIGHT_MIN_UNIVERSE_FRACTION:.0%} preflight "
+                "threshold — results cover a partial universe"
+            )
 
     spy = price_data.get("SPY")
     if spy is None or len(spy) < 200:
