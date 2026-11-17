@@ -60,7 +60,7 @@ The problem is finding them. You'd have to look at thousands of charts every mor
 
 ## Features
 
-- **Full-universe download** — fetches every NYSE/NASDAQ ticker from SEC EDGAR and removes funds (SEC name filter, Nasdaq Trader ETF flag, Yahoo quote-type backstop), then filters to liquid names ($5+ price, 500K+ daily volume). Coverage is not complete in practice: roughly a third of tickers fail to download on a typical run (#12)
+- **NYSE + NASDAQ universe** — fetches every NYSE/NASDAQ ticker from SEC EDGAR, drops funds (SEC name filter + Nasdaq Trader ETF flag; a Yahoo quote-type check also keeps funds out of trade signals), then filters to liquid names ($5+ price, 500K+ daily volume). Scheduled runs currently miss part of the universe; see [Limitations](#limitations)
 - **Market context gate** — breadth indicators, VIX, breakout follow-through rate; risk-off regime suppresses all output
 - **6 factor categories** computed per stock:
 
@@ -217,8 +217,9 @@ Everything is free — no API keys, no subscriptions:
 | Data | Source |
 |------|--------|
 | Ticker universe | [SEC EDGAR](https://www.sec.gov/files/company_tickers_exchange.json) |
+| ETF flags (fund filter) | [Nasdaq Trader symbol directory](https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqtraded.txt) |
 | Price & volume | [yfinance](https://github.com/ranaroussi/yfinance) (Yahoo Finance) |
-| Float, short interest, sector | yfinance `Ticker.info` |
+| Float, short interest, sector, quote type | yfinance `Ticker.info` |
 
 ## Requirements
 
@@ -300,16 +301,18 @@ Before wiring trade execution, simulated 12 stop / trailing / time-based exit st
 - **Tight stops destroy the edge.** Every variant tighter than 3×ATR (5%, 2×ATR, 2×ATR trailing) flipped the median return negative — they get whipsawed by normal pullbacks.
 - **Trailing stops are net-harmful** even at 3×ATR — breakouts need room to consolidate.
 - **3×ATR initial stop, 10-day max hold** matches buy-and-hold on win rate (51.4% vs 52.6%) and median (+0.20% vs +0.34%) while cutting the average drawdown to ~5%. Only fires 19% of the time. (Stops are not a hard floor — a stock can still gap far below the stop overnight, so position sizing carries the real risk control.)
-- **Mixed regime is unprofitable across every strategy** — the trading bot must skip mixed-regime days entirely.
+- **Mixed regime is unprofitable across every strategy** — so the bot started out skipping mixed-regime days entirely.
 
 Full results: [`test_results/2026-05-01_exit_strategies.md`](test_results/2026-05-01_exit_strategies.md).
+
+**Revised in v6 (2026-07-29).** A counterfactual re-test ([`test_results/2026-07-29_counterfactual_analysis.md`](test_results/2026-07-29_counterfactual_analysis.md)) changed two of these calls. The May test never tried partial profits, and its trailing simulation was too pessimistic. Selling half at +3×ATR and trailing the rest 3×ATR below the highest close (same 3×ATR stop and 10-day hold) raised the winsorized average per trade, so that is now the bot's exit. Mixed-regime days now trade at half risk: favorable-only trading left too few trades to ever evaluate the bot, and a later re-run on shifted windows found only caution and risk-off days reliably negative.
 
 ### Paper trading: the bot's first leg
 
 **Phase 10 (in progress):** Fully autonomous bot. Three of seven steps shipped so far:
 
-- ✅ **Step 53b — exit strategy backtest** (above): chose 3×ATR / 10d / favorable-regime-only as the bot's default policy.
-- ✅ **Step 51 — trade signal generator** ([`scanner/signals.py`](scanner/signals.py)): converts each day's ranked watchlist into actionable signals — entry price, stop, position size (1% account risk, 20% position cap), max 5 concurrent. Saved automatically to `scans/signals_*.json`; `--signals` flag also prints them.
+- ✅ **Step 53b — exit strategy backtest** (above): chose 3×ATR / 10d / favorable-regime-only as the bot's first policy (replaced in v6 by the partial-plus-trail exit and half-risk mixed days, above).
+- ✅ **Step 51 — trade signal generator** ([`scanner/signals.py`](scanner/signals.py)): converts each day's ranked watchlist into actionable signals — entry price, stop, position size (1% account risk, halved on mixed-regime days; 20% position cap), up to 5 signals a day (the simulator holds at most 8 positions). Saved automatically to `scans/signals_*.json`; `--signals` flag also prints them.
 - ✅ **Step 52 — local paper-trading simulator** ([`scanner/paper_simulator.py`](scanner/paper_simulator.py)): consumes the saved signals and simulates execution against actual daily OHLC bars — no broker account, no KYC, no API keys. Deliberately *more* pessimistic than the backtest:
   - Entries fill at the limit when the day's high crosses it, at the open on a small gap up, and are **abandoned entirely if price gaps >0.5% past the level** — the bot never chases
   - Gap-down opens fill stops **at the open**, not at the stop price
@@ -332,11 +335,43 @@ Full results: [`test_results/2026-05-01_exit_strategies.md`](test_results/2026-0
 
 Account: **+1.39% in 10 trading days of exposure, max drawdown -1.14%.** Five weeks of out-of-sample data, and the two design pillars both showed up: wide stops let winners breathe, and risk-based sizing kept the loser at exactly one risk unit.
 
-**Current state of the account (2026-10-28):** -0.86% after 44 closed trades (22W / 22L), max drawdown -5.15%. Nothing traded from 2026-09-21 to 2026-10-27: every day was caution or risk-off, so the regime gate issued no signals. The first replay's +1.39% above was 10 trading days of exposure; since then the account has been roughly flat, which at n = 44 is what the backtest's per-trade edge (+0.081R against ~0.68R of per-trade noise) predicts — the sample is far too small to judge the edge either way.
+**Current state of the account (2026-11-16):** -2.03% after 51 closed trades (25W / 26L), with 5 positions open and a max drawdown of -5.15%. The mean result is -0.041R per trade, with a 95% confidence interval of -0.23R to +0.15R. That interval contains both zero and the backtest's +0.081R expectancy, so 51 trades can't yet tell the two apart. No new signals were issued from 2026-09-09 to 2026-10-27: every scan day was caution or risk-off, except 2026-09-23, which the data preflight refused. The last open position closed on 2026-09-21.
 
-The [2026-09-16 profitability audit](test_results/2026-09-16_live_trade_audit.md) dug into why the bot is flat and found four things: (1) the payoff structure caps the edge at ~0.05R per trade — time exits give back most of the peak (+10.4% average MFE, +4.1% at exit) and the partial target is rarely reached; (2) the sizing formula puts the most money in the stocks least able to break out; (3) the bot spent seven weeks at full size in the wrong regime; and (4) entries take any intraday touch of the level, unconfirmed. It also cleared the usual suspects: slots/throughput, market beta (0.10) and — post-v6 — the data feed are not the problem.
+`--paper-report` on the same day (excerpt; the report prints one equity bar per trading day, condensed here to one bar per week):
 
-**What you can reproduce:** `paper_trades/` and `scans/` are gitignored personal state, so the live account above is not in this repo. The backtest numbers are reproducible: they come from `python -m scanner --backtest-multi` plus `--exit-backtest`, with summaries in [`test_results/`](test_results/).
+```
+PAPER TRADING REPORT
+============================================================================================
+Inception 2026-05-04   As of 2026-11-16   Trading days 137
+Equity $24,492.10  (-2.03% total)   Cash $17,415.73   Positions $7,076.37 (5/8)
+Realized P&L $-505.77   Unrealized $-2.13   Max DD -5.15%   Current DD -4.48%
+
+TRADE STATISTICS
+Closed 51 (25W/26L, 49.0% win rate)   Expectancy $-9.92/trade   Profit factor 0.83
+Avg win $+101.46   Avg loss $-117.01   Avg hold 8.8d   Best WOLF +57.9%   Worst MYGN -16.8%
+Exits: stop 10, stop_gap 1, time 40   Avg MAE -6.3%   Avg MFE +8.0%
+
+GO-LIVE GATE  (Phase 10 criteria)
+[✗] 60+ closed trades                              51/60
+[✗] lower 95% bound of mean R > 0                  mean -0.041R (SE 0.096R) [CI -0.234 to +0.151R] (n=51)
+[·] live mean R consistent with backtest           backtest +0.081R (n=51 — need 60+ to judge)
+[✓] win rate consistent with backtest (47-56%)     49.0% [CI 35.9-62.3] (n=51)
+[✓] max drawdown < 10%                             -5.15%
+
+WEEKLY EQUITY  (May 8 → Nov 16, low $24,356 / high $25,456)
+▅█▇▇▇▇▅▆▅▃▂▁▁▃▂▃▂▂▂▃▃▃▃▃▃▃▁▁▁
+```
+
+The [2026-09-16 profitability audit](test_results/2026-09-16_live_trade_audit.md), written at 41 trades, looked for why the account isn't making money and found four things:
+
+1. **The payoff structure caps expectancy at ~0.05R per trade.** Time exits give back most of the peak (+10.4% average MFE, +4.1% at exit), and the partial-profit target is rarely reached.
+2. **Sizing puts the most money in the stocks least able to break out.** Risk-based sizing on a 3×ATR stop makes position size inversely proportional to volatility. The 13k-pick backtest does *not* support simply cutting low-ADR names, though: they are its best bucket, and the audit reads the live losses on them (14 trades) as an era effect.
+3. **Seven weeks at full size in the wrong regime.** Until the v6 regime fix went live on 2026-07-30, a bug labelled every day favorable, so the bot traded what were really mixed days at full size.
+4. **Entries take any intraday touch of the level, unconfirmed.** 51% of live fills closed below the entry price on the fill day.
+
+It ruled out slots/throughput and market beta (0.10). It also cleared the data feed, but that was before the download gap described under [Limitations](#limitations) was measured.
+
+**What you can reproduce:** `paper_trades/` and `scans/` are gitignored personal state, so the live account above is not in this repo. The backtests re-run from scratch: `python -m scanner --backtest-multi`, then `--exit-backtest` on the saved picks. The six windows are the ~3 years before the download date, so a run today tests a later span than the dated tables above, on a universe that now excludes funds. Expect the numbers to differ from these tables. Each dated run's summary is in [`test_results/`](test_results/).
 
 **Phase 9 (deferred):** AI-enhanced analysis using Claude. Originally planned next, but reprioritized — its value is unverifiable at backtest scale (too expensive across 13,500 picks). Will revisit as an A/B filter on top of the running bot once we have ≥100 paper trades.
 
@@ -347,7 +382,7 @@ Full quintile breakdowns and methodology details are in [`test_results/`](test_r
 - **End-of-day data only** — yfinance provides daily bars, not intraday. Use this for pre-market watchlist building, not live entries
 - **Catalyst detection is approximate** — volume spikes are a proxy for actual news events (earnings, FDA, contracts)
 - **Ranking has modest, regime-dependent edge** — backtesting shows 51.8% average win rate across 6 time windows (range: 46.6%-56.1%). Edge strongest in favorable markets, weakest in mixed/choppy conditions
-- **yfinance rate limits** — first run downloads ~7,000 tickers; occasional throttling is normal
+- **Download gap on scheduled runs** — the launchd runs currently fail to download about a third of tickers, mega-caps included, so those runs rank roughly 1,200–1,650 stocks a day rather than the full liquid set. The data preflight doesn't flag it yet ([#12](https://github.com/VladPetrariu/Qullamaggie-breakout-scanner/issues/12)). Manual runs from a terminal haven't shown the problem. Separately, occasional yfinance throttling on a first run is normal
 
 ## Background
 
