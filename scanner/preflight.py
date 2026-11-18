@@ -12,7 +12,7 @@ to emit signals rather than trade on stale prices.
 Three checks:
 - freshness: benchmarks and >=90% of downloaded stock tickers carry the
   prior NYSE session's bar;
-- completeness: the download contains at least half of the requested
+- completeness: the download contains at least 90% of the requested
   universe (throttling that drops whole 500-ticker chunks would
   otherwise shrink the freshness denominator and pass at 100%);
 - unscheduled-closure fallback: when NOBODY has the prior session's bar
@@ -91,11 +91,15 @@ def check_price_data(
             fresh_ok = True
 
     universe_fraction = None
+    n_requested = None
+    n_missing = None
     complete_ok = True
     if universe:
         requested = [t for t in universe if t not in BENCHMARK_TICKERS]
         universe_fraction = cov["n_tickers"] / len(requested) if requested else 0.0
         complete_ok = universe_fraction >= PREFLIGHT_MIN_UNIVERSE_FRACTION
+        n_requested = len(requested)
+        n_missing = sum(1 for t in requested if t not in price_data)
 
     return {
         "ok": fresh_ok and complete_ok,
@@ -107,6 +111,8 @@ def check_price_data(
         "universe_fraction": (
             round(universe_fraction, 3) if universe_fraction is not None else None
         ),
+        "n_requested": n_requested,
+        "n_missing": n_missing,
         "note": note,
     }
 
@@ -120,6 +126,10 @@ def describe(result: dict) -> str:
         parts.append(f"benchmarks missing it: {', '.join(result['missing_benchmarks'])}")
     if result.get("universe_fraction") is not None:
         parts.append(f"download holds {result['universe_fraction']:.0%} of the requested universe")
+    if result.get("n_missing"):
+        parts.append(
+            f"{result['n_missing']:,} of {result['n_requested']:,} requested tickers missing"
+        )
     if result.get("note"):
         parts.append(result["note"])
     return "; ".join(parts)

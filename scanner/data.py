@@ -10,11 +10,27 @@ from .cache import Cache
 from .config import (
     BENCHMARK_FETCH_RETRIES,
     BENCHMARK_TICKERS,
+    CACHE_DIR,
     CACHE_PRICES_TTL_HOURS,
     DOWNLOAD_CHUNK_SIZE,
     PREFLIGHT_BENCHMARKS,
     PRICE_HISTORY_PERIOD,
 )
+
+
+def _set_tz_cache_location() -> None:
+    """Point yfinance's timezone cache at a project-local sqlite file.
+
+    The default location is a single sqlite file under the user's cache
+    directory, shared by every yfinance process; with ~14 download threads
+    it is what the recurring ``OperationalError('unable to open database
+    file')`` failures point at (#12). A project-local cache avoids the
+    contention. Called once per download run, before any yf.download.
+    """
+    try:
+        yf.set_tz_cache_location(str(CACHE_DIR / "yfinance"))
+    except Exception:
+        pass  # older yfinance without the API — downloads still work
 
 
 def download_prices(
@@ -46,6 +62,8 @@ def download_prices(
             print(f"  Using cached price data ({cache_key})")
             return _long_to_dict(cached_df)
 
+    _set_tz_cache_location()
+
     # Merge benchmarks into the download list (deduped)
     all_tickers = sorted(set(tickers) | set(BENCHMARK_TICKERS))
 
@@ -58,7 +76,7 @@ def download_prices(
     failed_chunks = 0
 
     for chunk in tqdm(chunks, desc="  Downloading prices", unit="batch"):
-        result = _download_chunk(chunk, period)
+        result = _download_chunk_with_retry(chunk, period)
         all_data.update(result)
         if not result:
             failed_chunks += 1
@@ -71,6 +89,13 @@ def download_prices(
     # 500-ticker batches, silently degrading regime and RS inputs.
     bench = _download_benchmarks(period)
     all_data.update(bench)
+
+    missing = [t for t in all_tickers if t not in all_data]
+    if missing:
+        print(
+            f"  Warning: {len(missing):,} of {len(all_tickers):,} requested "
+            f"tickers returned no data ({len(all_data):,} received)"
+        )
 
     if all_data:
         cache.set_df(cache_key, _dict_to_long(all_data))
@@ -94,6 +119,24 @@ def _download_benchmarks(period: str) -> dict[str, pd.DataFrame]:
 # ---------------------------------------------------------------------------
 
 _KEEP_COLS = ["Open", "High", "Low", "Close", "Volume"]
+
+
+def _download_chunk_with_retry(
+    tickers: list[str], period: str
+) -> dict[str, pd.DataFrame]:
+    """Download one chunk, retrying the tickers that came back empty once.
+
+    Per-ticker failures inside a batch (throttling, tz-cache contention)
+    are usually transient, and the missing names include mega-caps — on
+    2026-10-28 about 36% of the universe came back empty (#12). One retry
+    of just the missing tickers recovers most of them without re-running
+    the whole 500-ticker batch.
+    """
+    result = _download_chunk(tickers, period)
+    missing = [t for t in tickers if t not in result]
+    if missing:
+        result.update(_download_chunk(missing, period))
+    return result
 
 
 def _download_chunk(tickers: list[str], period: str) -> dict[str, pd.DataFrame]:
