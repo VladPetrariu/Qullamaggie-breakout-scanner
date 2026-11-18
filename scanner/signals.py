@@ -6,7 +6,10 @@ position size (1% account risk × regime multiplier, capped at 20%
 account). Regime tiering per the corrected-regime analysis: favorable
 trades full size, mixed at half risk, caution/risk_off not at all.
 An ADR20 > 8% ceiling filters lottery-ticket volatility (that bucket
-wins 41.5% with a −4.9% median under the bot's exits).
+wins 41.5% with a −4.9% median under the bot's exits). A setup whose
+3×ATR stop would be tighter than MIN_STOP_DISTANCE_PCT is skipped
+(`atr_too_low`): ATR under ~1% of price means a pinned deal target or a
+fund, not a breakout.
 
 The signals are intended for downstream consumption by the Alpaca
 execution engine (step 52). This module never places orders itself.
@@ -123,17 +126,17 @@ def _build_signal(
     account_equity: float,
     rank: int,
     adr20: float | None = None,
-) -> Signal | None:
-    """Build a Signal from one ranked stock. Returns None if it should be skipped."""
+) -> tuple[Signal | None, str | None]:
+    """Build a signal and return its explicit skip reason, if any."""
     ticker = stock["ticker"]
     last_close = float(df["Close"].iloc[-1])
     breakout_level = stock.get("level_value")
     if breakout_level is None or breakout_level <= 0:
-        return None
+        return None, "no_level"
 
     atr = _wilder_atr(df)
     if atr is None:
-        return None
+        return None, "no_atr"
 
     notes: list[str] = []
 
@@ -142,22 +145,23 @@ def _build_signal(
     # exact mistake Qullamaggie warns against.
     overshoot_pct = (last_close - breakout_level) / breakout_level * 100
     if overshoot_pct > MAX_ENTRY_OVERSHOOT_PCT:
-        return None
+        return None, "extended"
 
     # Limit entry: a small buffer above the breakout level. Real bot fills
     # only if price actually trades through the level.
     limit_entry = round(breakout_level * (1 + ENTRY_BUFFER_PCT / 100), 2)
 
-    # Stop: entry - 3 × ATR, but never tighter than MIN_STOP_DISTANCE_PCT.
-    raw_stop = limit_entry - STOP_ATR_MULTIPLIER * atr
+    # Stop: entry - 3 × ATR. If that is tighter than MIN_STOP_DISTANCE_PCT
+    # (ATR under ~1% of price: a deal-pinned stock or a fund), skip the
+    # setup. Flooring the stop instead gave these names the largest
+    # positions in the book (issue #3). This one comparison is the floor,
+    # so no stop tighter than MIN_STOP_DISTANCE_PCT is ever placed.
+    stop_price = limit_entry - STOP_ATR_MULTIPLIER * atr
     min_stop = limit_entry * (1 - MIN_STOP_DISTANCE_PCT / 100)
-    stop_price = min(raw_stop, min_stop)
-    if stop_price < raw_stop:
-        notes.append(f"stop floored at {MIN_STOP_DISTANCE_PCT:.0f}% (ATR too tight)")
+    if stop_price > min_stop:
+        return None, "atr_too_low"
 
     stop_distance = limit_entry - stop_price
-    if stop_distance <= 0:
-        return None
     stop_distance_pct = stop_distance / limit_entry * 100
 
     # Sizing: 1% account risk × regime multiplier (mixed trades at half
@@ -171,7 +175,7 @@ def _build_signal(
     shares = int(math.floor(min(raw_shares, max_shares_by_cap)))
 
     if shares <= 0:
-        return None
+        return None, "size_zero"
     if raw_shares > max_shares_by_cap:
         notes.append(
             f"position capped at {MAX_POSITION_PCT * 100:.0f}% of account"
@@ -207,7 +211,7 @@ def _build_signal(
         last_close_date=df.index[-1].strftime("%Y-%m-%d"),
         generated_at=datetime.now().isoformat(timespec="seconds"),
         notes=notes,
-    )
+    ), None
 
 
 # ── Public entry point ───────────────────────────────────────────────────
@@ -237,7 +241,7 @@ def generate_signals(
         "skip_reasons": {
             "no_level": 0, "no_atr": 0, "extended": 0,
             "level_too_far": 0, "adr_too_high": 0, "size_zero": 0,
-            "not_equity": 0,
+            "not_equity": 0, "atr_too_low": 0,
         },
         "signals_issued": 0,
         "regime_gate_passed": regime in SIGNAL_TRADABLE_REGIMES,
@@ -278,15 +282,16 @@ def generate_signals(
             summary["skip_reasons"]["no_level"] += 1
             continue
 
-        # Quick reject: already extended (saves work in _build_signal)
+        # Quick reject: already extended (saves work in _build_signal; same
+        # overshoot-over-level test, so the two checks can't disagree)
         last_close = float(df["Close"].iloc[-1])
         bl = float(stock["level_value"])
-        gap_pct = (bl - last_close) / last_close * 100
-        if -gap_pct > MAX_ENTRY_OVERSHOOT_PCT:
+        if (last_close - bl) / bl * 100 > MAX_ENTRY_OVERSHOOT_PCT:
             summary["candidates_skipped"] += 1
             summary["skip_reasons"]["extended"] += 1
             continue
         # Quick reject: breakout level too far above current price to plausibly trigger
+        gap_pct = (bl - last_close) / last_close * 100
         if gap_pct > MAX_LEVEL_DISTANCE_PCT:
             summary["candidates_skipped"] += 1
             summary["skip_reasons"]["level_too_far"] += 1
@@ -300,13 +305,16 @@ def generate_signals(
             summary["skip_reasons"]["adr_too_high"] += 1
             continue
 
-        sig = _build_signal(
+        sig, skip_reason = _build_signal(
             stock, df, regime, account_equity,
             rank=stock.get("rank", len(signals) + 1), adr20=adr,
         )
         if sig is None:
+            # .get: a reason added to _build_signal but not seeded above
+            # must not crash the scan before the signals file is saved
+            reasons = summary["skip_reasons"]
+            reasons[skip_reason] = reasons.get(skip_reason, 0) + 1
             summary["candidates_skipped"] += 1
-            summary["skip_reasons"]["size_zero"] += 1
             continue
         signals.append(sig)
 

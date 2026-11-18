@@ -208,6 +208,8 @@ All thresholds live in [`scanner/config.py`](scanner/config.py). Key parameters:
 | `MIN_AVG_VOLUME` | 500K | Minimum 20-day average volume |
 | `VOLUME_SPIKE_THRESHOLD` | 3.0x | Volume multiple to detect catalysts |
 | `EMA_PERIODS` | 10, 20, 50 | EMA stack periods |
+| `STOP_ATR_MULTIPLIER` | 3.0 | ATR multiple used to calculate the initial stop |
+| `MIN_STOP_DISTANCE_PCT` | 3.0% | Minimum stop distance. A candidate whose ATR stop would be tighter is skipped (`atr_too_low`), not floored |
 | `CACHE_PRICES_TTL_HOURS` | 16 | Hours before price data refreshes |
 
 ## Data Sources

@@ -157,7 +157,7 @@ STOP_ATR_MULTIPLIER = 3.0           # entry minus N × ATR(14) = stop
 PARTIAL_PROFIT_ATR = 3.0            # resting limit sells 50% at entry + N × ATR
 TRAIL_STOP_ATR = 3.0                # after the partial: stop = highest close − N × ATR
 MAX_HOLD_DAYS = 10                  # time-based exit horizon (15/20d tested worse)
-MIN_STOP_DISTANCE_PCT = 3.0         # floor: don't place a stop tighter than this
+MIN_STOP_DISTANCE_PCT = 3.0         # skip (atr_too_low) if the 3×ATR stop is tighter than this — ATR < ~1% of price
 MAX_ENTRY_OVERSHOOT_PCT = 0.5       # skip if last_close > entry × (1 + this/100) — too extended
 MAX_LEVEL_DISTANCE_PCT = 3.0        # skip if level is more than this % above last_close — too far to trigger
 ENTRY_BUFFER_PCT = 0.1              # limit-order placed at entry × (1 + this/100)
