@@ -1,5 +1,7 @@
 import pandas as pd
+import pytest
 
+import scanner.signals as signals_module
 from scanner.signals import generate_signals
 
 
@@ -67,7 +69,6 @@ def test_missing_quote_type_is_not_skipped_as_non_equity():
     assert summary["skip_reasons"]["not_equity"] == 0
 
 
-
 def test_stop_floored_candidate_is_skipped_as_atr_too_low():
     watchlist = [{
         "ticker": "ATKR",
@@ -99,7 +100,10 @@ def test_candidate_with_stop_wider_than_floor_is_not_skipped():
 
     assert len(signals) == 1
     assert summary["skip_reasons"]["atr_too_low"] == 0
-
+    # The stop is the plain 3×ATR stop: entry 10.01 − 3 × 0.30
+    assert signals[0].stop_price == pytest.approx(9.11)
+    assert signals[0].stop_distance_pct == pytest.approx(8.99)
+    assert not any("floored" in note for note in signals[0].notes)
 
 
 def test_candidate_just_above_stop_floor_threshold_is_kept():
@@ -112,6 +116,9 @@ def test_candidate_just_above_stop_floor_threshold_is_kept():
 
     assert len(signals) == 1
     assert summary["skip_reasons"]["atr_too_low"] == 0
+    # 3 × 0.102 / 10.01 = 3.06%: kept with its own stop, never widened
+    assert signals[0].stop_price == pytest.approx(9.70)
+    assert signals[0].stop_distance_pct == pytest.approx(3.06)
 
 
 def test_candidate_just_below_stop_floor_threshold_is_skipped():
@@ -138,3 +145,21 @@ def test_flat_price_data_is_counted_as_no_atr():
     assert signals == []
     assert summary["skip_reasons"]["no_atr"] == 1
     assert summary["skip_reasons"]["size_zero"] == 0
+
+
+def test_unseeded_skip_reason_is_counted_not_raised(monkeypatch):
+    """A skip reason added to _build_signal without a summary seed must be
+    counted, not raise KeyError mid-scan before the signals file is saved."""
+    monkeypatch.setattr(signals_module, "_build_signal",
+                        lambda *args, **kwargs: (None, "new_reason"))
+    watchlist = [{"ticker": "NEW", "quote_type": "EQUITY", "level_value": 10.0}]
+    # ADR20 3% so the candidate clears the ceiling and reaches _build_signal
+    price_data = {"NEW": _fake_price_df(high=10.15, low=9.85)}
+
+    signals, summary = generate_signals(
+        watchlist, regime="favorable", price_data=price_data,
+    )
+
+    assert signals == []
+    assert summary["skip_reasons"]["new_reason"] == 1
+    assert summary["candidates_skipped"] == 1
