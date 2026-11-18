@@ -123,17 +123,17 @@ def _build_signal(
     account_equity: float,
     rank: int,
     adr20: float | None = None,
-) -> Signal | None:
-    """Build a Signal from one ranked stock. Returns None if it should be skipped."""
+) -> tuple[Signal | None, str | None]:
+    """Build a signal and return its explicit skip reason, if any."""
     ticker = stock["ticker"]
     last_close = float(df["Close"].iloc[-1])
     breakout_level = stock.get("level_value")
     if breakout_level is None or breakout_level <= 0:
-        return None
+        return None, "no_level"
 
     atr = _wilder_atr(df)
     if atr is None:
-        return None
+        return None, "no_atr"
 
     notes: list[str] = []
 
@@ -142,11 +142,17 @@ def _build_signal(
     # exact mistake Qullamaggie warns against.
     overshoot_pct = (last_close - breakout_level) / breakout_level * 100
     if overshoot_pct > MAX_ENTRY_OVERSHOOT_PCT:
-        return None
+        return None, "extended"
 
     # Limit entry: a small buffer above the breakout level. Real bot fills
     # only if price actually trades through the level.
     limit_entry = round(breakout_level * (1 + ENTRY_BUFFER_PCT / 100), 2)
+
+    # Reject stops that would be tightened by the safety floor. Keep the
+    # floor below as a defensive fallback for rounding or future changes.
+    atr_stop_distance_pct = STOP_ATR_MULTIPLIER * atr / limit_entry * 100
+    if atr_stop_distance_pct < MIN_STOP_DISTANCE_PCT:
+        return None, "atr_too_low"
 
     # Stop: entry - 3 × ATR, but never tighter than MIN_STOP_DISTANCE_PCT.
     raw_stop = limit_entry - STOP_ATR_MULTIPLIER * atr
@@ -157,7 +163,7 @@ def _build_signal(
 
     stop_distance = limit_entry - stop_price
     if stop_distance <= 0:
-        return None
+        return None, "size_zero"
     stop_distance_pct = stop_distance / limit_entry * 100
 
     # Sizing: 1% account risk × regime multiplier (mixed trades at half
@@ -171,7 +177,7 @@ def _build_signal(
     shares = int(math.floor(min(raw_shares, max_shares_by_cap)))
 
     if shares <= 0:
-        return None
+        return None, "size_zero"
     if raw_shares > max_shares_by_cap:
         notes.append(
             f"position capped at {MAX_POSITION_PCT * 100:.0f}% of account"
@@ -207,7 +213,7 @@ def _build_signal(
         last_close_date=df.index[-1].strftime("%Y-%m-%d"),
         generated_at=datetime.now().isoformat(timespec="seconds"),
         notes=notes,
-    )
+    ), None
 
 
 # ── Public entry point ───────────────────────────────────────────────────
@@ -300,25 +306,14 @@ def generate_signals(
             summary["skip_reasons"]["adr_too_high"] += 1
             continue
 
-        # Quick reject: 3×ATR would hit the 3% stop floor. These
-        # unusually quiet names can otherwise receive oversized positions.
-        limit_entry = round(float(stock["level_value"]) * (1 + ENTRY_BUFFER_PCT / 100), 2)
-        atr = _wilder_atr(df)
-        if atr is not None and (
-            STOP_ATR_MULTIPLIER * atr / limit_entry * 100
-            < MIN_STOP_DISTANCE_PCT
-        ):
-            summary["candidates_skipped"] += 1
-            summary["skip_reasons"]["atr_too_low"] += 1
-            continue
-
-        sig = _build_signal(
+        sig, skip_reason = _build_signal(
             stock, df, regime, account_equity,
             rank=stock.get("rank", len(signals) + 1), adr20=adr,
         )
         if sig is None:
+            reason = skip_reason or "size_zero"
             summary["candidates_skipped"] += 1
-            summary["skip_reasons"]["size_zero"] += 1
+            summary["skip_reasons"][reason] += 1
             continue
         signals.append(sig)
 

@@ -11,7 +11,7 @@ def _fake_price_df(rows: int = 20, high: float = 10.5, low: float = 9.5) -> pd.D
         "Low": [low] * rows,
         "Close": [10.0] * rows,
         "Volume": [100_000] * rows,
-    })
+    }, index=pd.bdate_range("2026-01-02", periods=rows))
 
 
 def test_non_equity_quote_type_is_skipped():
@@ -99,3 +99,42 @@ def test_candidate_with_stop_wider_than_floor_is_not_skipped():
 
     assert len(signals) == 1
     assert summary["skip_reasons"]["atr_too_low"] == 0
+
+
+
+def test_candidate_just_above_stop_floor_threshold_is_kept():
+    watchlist = [{"ticker": "ABOVE", "quote_type": "EQUITY", "level_value": 10.0}]
+    price_data = {"ABOVE": _fake_price_df(high=10.051, low=9.949)}
+
+    signals, summary = generate_signals(
+        watchlist, regime="favorable", price_data=price_data,
+    )
+
+    assert len(signals) == 1
+    assert summary["skip_reasons"]["atr_too_low"] == 0
+
+
+def test_candidate_just_below_stop_floor_threshold_is_skipped():
+    watchlist = [{"ticker": "BELOW", "quote_type": "EQUITY", "level_value": 10.0}]
+    price_data = {"BELOW": _fake_price_df(high=10.049, low=9.951)}
+
+    signals, summary = generate_signals(
+        watchlist, regime="favorable", price_data=price_data,
+    )
+
+    assert signals == []
+    assert summary["skip_reasons"]["atr_too_low"] == 1
+    assert summary["skip_reasons"]["size_zero"] == 0
+
+
+def test_flat_price_data_is_counted_as_no_atr():
+    watchlist = [{"ticker": "FLAT", "quote_type": "EQUITY", "level_value": 10.0}]
+    price_data = {"FLAT": _fake_price_df(high=10.0, low=10.0)}
+
+    signals, summary = generate_signals(
+        watchlist, regime="favorable", price_data=price_data,
+    )
+
+    assert signals == []
+    assert summary["skip_reasons"]["no_atr"] == 1
+    assert summary["skip_reasons"]["size_zero"] == 0
